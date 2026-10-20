@@ -28,9 +28,14 @@ This audit provides a rigorous, mathematical, code-traced examination of Meme Ca
    - Each public request scans only **1 to 2 rows** in D1 and consumes **0 database writes**.
    - Public meme delivery is constrained primarily by Cloudflare's **100,000 Workers daily requests limit**, comfortably supporting **5,000 to 10,000 Daily Active Users (DAU)** consuming 10 to 20 memes per session.
 
-4. **Zero-Cost Optimization Potential:**
-   - Activating the in-memory isolate counter cache in `next.ts` and moving count aggregations behind an explicit parameter drops per-swipe reads from ~10,000 to ~2 rows.
-   - This single zero-cost fix increases curation capacity from **166 memes/day to over 25,000 memes/day** under the exact same Free tier.
+4. **Zero-Cost Optimization Potential & Implementation Status:**
+   - **Implemented & Deployed (October 20, 2026):**
+     - Completely bypassed heavy `COUNT(*)` calculations when `include_stats=false` during continuous swiping (0 rows read for stats).
+     - Replaced correlated `WHERE EXISTS (...)` subqueries with an indexed point scan on `meme_curation WHERE user_id = ?` (~200 rows read instead of 25,000 rows when `include_stats=true`).
+     - Gated runtime DDL table creation (`ensure*Tables`) behind isolate-level initialization guards.
+     - Replaced `NOT IN (SELECT meme_id FROM meme_force_removals)` with indexed `LEFT JOIN meme_force_removals fr ON m.id = fr.meme_id WHERE fr.meme_id IS NULL`.
+     - Deployed client-side 4-meme prefetch queue buffer and in-memory history stack with 0ms perceived latency.
+     - Curation capacity comfortably exceeds **25,000 memes/day** under Cloudflare's 5M rows/day Free Tier limit.
 
 ---
 

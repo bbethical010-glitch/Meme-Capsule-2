@@ -36,7 +36,8 @@ export default function AiReviewPanel({
     source: "judge4" | "judge5"
   ) => {
     const isKeep = j.corpus_status === "keep";
-    const statusColor = isKeep ? "#34C759" : j.corpus_status === "excluded" ? "#FF3B30" : "#FF9F0A";
+    const isExcluded = j.corpus_status === "excluded";
+    const statusColor = isKeep ? "#34C759" : isExcluded ? "#FF3B30" : "#FF9F0A";
 
     return (
       <div
@@ -53,7 +54,7 @@ export default function AiReviewPanel({
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #333", paddingBottom: "8px" }}>
-          <span style={{ fontSize: "16px", fontWeight: "bold", color: "#c58cff", fontFamily: "Anton", letterSpacing: "0.5px" }}>
+          <span style={{ fontSize: "16px", fontWeight: "bold", color: isExcluded ? "#FF3B30" : "#c58cff", fontFamily: "Anton", letterSpacing: "0.5px" }}>
             {judgeName}
           </span>
           <span
@@ -87,8 +88,8 @@ export default function AiReviewPanel({
           style={{
             marginTop: "auto",
             padding: "10px",
-            background: "#2a2a2a",
-            border: "1px solid #c58cff",
+            background: isExcluded ? "#FF3B30" : "#2a2a2a",
+            border: isExcluded ? "2px solid #ffffff" : "1px solid #c58cff",
             color: "#ffffff",
             fontFamily: "Anton",
             fontSize: "15px",
@@ -97,11 +98,12 @@ export default function AiReviewPanel({
             alignItems: "center",
             justifyContent: "center",
             gap: "8px",
-            transition: "all 0.15s ease"
+            transition: "all 0.15s ease",
+            boxShadow: isExcluded ? "2px 2px 0px #ffffff" : undefined
           }}
           title={`Adopt ${judgeName} decision [Key: ${shortcut}]`}
         >
-          <span className="curate-key-pill">[{shortcut}]</span>
+          <span className="curate-key-pill" style={{ background: isExcluded ? "rgba(0,0,0,0.3)" : undefined }}>[{shortcut}]</span>
           ADOPT {judgeName.toUpperCase()}
         </button>
       </div>
@@ -175,35 +177,37 @@ export default function AiReviewPanel({
                 type="button"
                 onClick={() => onAdopt(j4!, "judge4")}
                 style={{
-                  background: "#1c1b1b",
+                  background: j4!.corpus_status === "excluded" ? "#FF3B30" : "#1c1b1b",
                   border: `2px solid ${j4!.corpus_status === "keep" ? "#34C759" : "#FF3B30"}`,
                   color: "#fff",
                   padding: "8px",
                   fontFamily: "Anton",
                   fontSize: "12px",
                   cursor: "pointer",
-                  textAlign: "center"
+                  textAlign: "center",
+                  boxShadow: j4!.corpus_status === "excluded" ? "2px 2px 0px #ffffff" : undefined
                 }}
               >
-                <div style={{ color: "#c58cff" }}>J4 → {j4!.corpus_status.toUpperCase()}</div>
-                <div style={{ fontSize: "10px", color: "#34C759", marginTop: "2px" }}>SWIPE RIGHT →</div>
+                <div style={{ color: j4!.corpus_status === "excluded" ? "#ffffff" : "#c58cff" }}>J4 → {j4!.corpus_status.toUpperCase()}</div>
+                <div style={{ fontSize: "10px", color: j4!.corpus_status === "excluded" ? "#ffe" : "#34C759", marginTop: "2px" }}>SWIPE RIGHT →</div>
               </button>
               <button
                 type="button"
                 onClick={() => onAdopt(j5!, "judge5")}
                 style={{
-                  background: "#1c1b1b",
+                  background: j5!.corpus_status === "excluded" ? "#FF3B30" : "#1c1b1b",
                   border: `2px solid ${j5!.corpus_status === "keep" ? "#34C759" : "#FF3B30"}`,
                   color: "#fff",
                   padding: "8px",
                   fontFamily: "Anton",
                   fontSize: "12px",
                   cursor: "pointer",
-                  textAlign: "center"
+                  textAlign: "center",
+                  boxShadow: j5!.corpus_status === "excluded" ? "2px 2px 0px #ffffff" : undefined
                 }}
               >
-                <div style={{ color: "#c58cff" }}>J5 → {j5!.corpus_status.toUpperCase()}</div>
-                <div style={{ fontSize: "10px", color: "#5AC8FA", marginTop: "2px" }}>← SWIPE LEFT</div>
+                <div style={{ color: j5!.corpus_status === "excluded" ? "#ffffff" : "#c58cff" }}>J5 → {j5!.corpus_status.toUpperCase()}</div>
+                <div style={{ fontSize: "10px", color: j5!.corpus_status === "excluded" ? "#ffe" : "#5AC8FA", marginTop: "2px" }}>← SWIPE LEFT</div>
               </button>
             </div>
           </div>
@@ -213,19 +217,21 @@ export default function AiReviewPanel({
           const singleJudge = j4 || j5!;
           const isJ4 = hasJ4;
           const isKeep = singleJudge.corpus_status === "keep";
+          const isExcluded = singleJudge.corpus_status === "excluded";
+          const borderColor = isKeep ? "#34C759" : isExcluded ? "#FF3B30" : "#f4c300";
           return (
             <div
               className="curate-mobile-ai-card"
               style={{
-                borderColor: "#f4c300",
-                boxShadow: "3px 3px 0px #f4c300"
+                borderColor: borderColor,
+                boxShadow: `3px 3px 0px ${borderColor}`
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontFamily: "Anton", fontSize: "15px", color: "#f4c300", letterSpacing: "0.5px" }}>
-                  🔶 {isJ4 ? "AI JUDGE 4" : "AI JUDGE 5"}: {singleJudge.corpus_status.toUpperCase()}
+                <span style={{ fontFamily: "Anton", fontSize: "15px", color: borderColor, letterSpacing: "0.5px" }}>
+                  {isExcluded ? "⛔ " : "🔶 "}{isJ4 ? "AI JUDGE 4" : "AI JUDGE 5"}: {singleJudge.corpus_status.toUpperCase()}
                 </span>
-                <span style={{ fontSize: "10px", color: "#aaa" }}>
+                <span style={{ fontSize: "10px", color: isExcluded ? "#FF3B30" : "#aaa", fontFamily: "monospace" }}>
                   Swipe {isJ4 ? "→" : "←"} to adopt
                 </span>
               </div>
@@ -235,13 +241,14 @@ export default function AiReviewPanel({
                 style={{
                   width: "100%",
                   marginTop: "8px",
-                  background: isKeep ? "#34C759" : "#f4c300",
-                  color: "#121212",
-                  border: "none",
+                  background: isKeep ? "#34C759" : isExcluded ? "#FF3B30" : "#f4c300",
+                  color: isExcluded ? "#ffffff" : "#121212",
+                  border: isExcluded ? "2px solid #ffffff" : "none",
                   padding: "8px",
                   fontFamily: "Anton",
                   fontSize: "13px",
-                  cursor: "pointer"
+                  cursor: "pointer",
+                  boxShadow: isExcluded ? "2px 2px 0px #ffffff" : undefined
                 }}
               >
                 ADOPT {isJ4 ? "J4 (SWIPE →)" : "J5 (SWIPE ←)"}
@@ -364,13 +371,14 @@ export default function AiReviewPanel({
                 style={{
                   width: "100%",
                   marginTop: "12px",
-                  background: "#34C759",
-                  color: "#121212",
-                  border: "2px solid #f4c300",
+                  background: j4!.corpus_status === "excluded" ? "#FF3B30" : "#34C759",
+                  color: j4!.corpus_status === "excluded" ? "#ffffff" : "#121212",
+                  border: j4!.corpus_status === "excluded" ? "2px solid #ffffff" : "2px solid #f4c300",
                   padding: "12px",
                   fontFamily: "Anton",
                   fontSize: "16px",
-                  cursor: "pointer"
+                  cursor: "pointer",
+                  boxShadow: j4!.corpus_status === "excluded" ? "3px 3px 0px #ffffff" : undefined
                 }}
               >
                 FAST-APPROVE J4 DECISION [SPACE / ENTER]
@@ -410,64 +418,65 @@ export default function AiReviewPanel({
 
       {/* 3. STATE SINGLE AI: ONLY ONE AI EVALUATED */}
       {((hasJ4 && !hasJ5) || (!hasJ4 && hasJ5)) && (
-        <div
-          style={{
-            background: "#1c1b1b",
-            border: "2px solid #f4c300",
-            padding: "18px",
-            boxShadow: "4px 4px 0px #f4c300"
-          }}
-        >
-          {(() => {
-            const singleJudge = j4 || j5!;
-            const judgeLabel = hasJ4 ? "AI Judge 4" : "AI Judge 5";
-            const source = hasJ4 ? "judge4" : "judge5";
-            const isKeep = singleJudge.corpus_status === "keep";
+        (() => {
+          const singleJudge = j4 || j5!;
+          const judgeLabel = hasJ4 ? "AI Judge 4" : "AI Judge 5";
+          const source = hasJ4 ? "judge4" : "judge5";
+          const isKeep = singleJudge.corpus_status === "keep";
+          const isExcluded = singleJudge.corpus_status === "excluded";
+          const borderColor = isKeep ? "#34C759" : isExcluded ? "#FF3B30" : "#f4c300";
 
-            return (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                  <span style={{ fontSize: "18px", color: "#f4c300", fontFamily: "Anton", letterSpacing: "1px" }}>
-                    SINGLE AI EVALUATION: {judgeLabel.toUpperCase()} → {singleJudge.corpus_status.toUpperCase()}
-                  </span>
-                  <span style={{ fontSize: "11px", background: "#332d18", color: "#f4c300", padding: "2px 8px", fontFamily: "monospace" }}>
-                    1 AI READY
-                  </span>
-                </div>
+          return (
+            <div
+              style={{
+                background: "#1c1b1b",
+                border: `2px solid ${borderColor}`,
+                padding: "18px",
+                boxShadow: `4px 4px 0px ${borderColor}`
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <span style={{ fontSize: "18px", color: borderColor, fontFamily: "Anton", letterSpacing: "1px" }}>
+                  {isExcluded ? "⛔ " : ""}SINGLE AI EVALUATION: {judgeLabel.toUpperCase()} → {singleJudge.corpus_status.toUpperCase()}
+                </span>
+                <span style={{ fontSize: "11px", background: isExcluded ? "#3a1414" : "#332d18", color: borderColor, padding: "2px 8px", fontFamily: "monospace" }}>
+                  1 AI READY
+                </span>
+              </div>
 
-                <div style={{ background: "#121212", border: "1px solid #333", padding: "12px", marginBottom: "14px", fontSize: "13px", color: "#ddd" }}>
-                  <div><span style={{ color: "#888" }}>Status:</span> <strong style={{ color: isKeep ? "#34C759" : "#FF3B30" }}>{singleJudge.corpus_status.toUpperCase()}</strong></div>
-                  <div><span style={{ color: "#888" }}>Topics:</span> {singleJudge.topics.join(", ") || "None"}</div>
-                  <div><span style={{ color: "#888" }}>Tone:</span> {singleJudge.tone || "None"}</div>
-                  <div><span style={{ color: "#888" }}>Mechanisms:</span> {singleJudge.humour_mechanisms.join(", ") || "None"}</div>
-                  {singleJudge.curator_note && (
-                    <div style={{ marginTop: "4px", fontSize: "11px", color: "#aaa", fontStyle: "italic" }}>
-                      Note: {singleJudge.curator_note}
-                    </div>
-                  )}
-                </div>
+              <div style={{ background: "#121212", border: "1px solid #333", padding: "12px", marginBottom: "14px", fontSize: "13px", color: "#ddd" }}>
+                <div><span style={{ color: "#888" }}>Status:</span> <strong style={{ color: isKeep ? "#34C759" : isExcluded ? "#FF3B30" : "#FF9F0A" }}>{singleJudge.corpus_status.toUpperCase()}</strong></div>
+                <div><span style={{ color: "#888" }}>Topics:</span> {singleJudge.topics.join(", ") || "None"}</div>
+                <div><span style={{ color: "#888" }}>Tone:</span> {singleJudge.tone || "None"}</div>
+                <div><span style={{ color: "#888" }}>Mechanisms:</span> {singleJudge.humour_mechanisms.join(", ") || "None"}</div>
+                {singleJudge.curator_note && (
+                  <div style={{ marginTop: "4px", fontSize: "11px", color: "#aaa", fontStyle: "italic" }}>
+                    Note: {singleJudge.curator_note}
+                  </div>
+                )}
+              </div>
 
-                <button
-                  type="button"
-                  onClick={() => onAdopt(singleJudge, source)}
-                  style={{
-                    width: "100%",
-                    background: isKeep ? "#34C759" : "#f4c300",
-                    color: "#121212",
-                    border: "2px solid #ffffff",
-                    padding: "14px",
-                    fontFamily: "Anton",
-                    fontSize: "18px",
-                    cursor: "pointer",
-                    boxShadow: "3px 3px 0px #ffffff"
-                  }}
-                >
-                  ➔ INSTANTLY ADOPT {judgeLabel.toUpperCase()} [SPACE / ENTER]
-                </button>
-              </>
-            );
-          })()}
-        </div>
+              <button
+                type="button"
+                onClick={() => onAdopt(singleJudge, source)}
+                style={{
+                  width: "100%",
+                  background: isKeep ? "#34C759" : isExcluded ? "#FF3B30" : "#f4c300",
+                  color: isExcluded ? "#ffffff" : "#121212",
+                  border: "2px solid #ffffff",
+                  padding: "14px",
+                  fontFamily: "Anton",
+                  fontSize: "18px",
+                  cursor: "pointer",
+                  letterSpacing: "0.5px",
+                  boxShadow: "3px 3px 0px #ffffff"
+                }}
+              >
+                ➔ INSTANTLY ADOPT {judgeLabel.toUpperCase()} [SPACE / ENTER]
+              </button>
+            </div>
+          );
+        })()
       )}
 
       {/* 4. STATE NONE: NEITHER AI HAS EVALUATED */}

@@ -60,9 +60,14 @@ function parseArray(value: string | null): string[] {
   }
 }
 
+let tablesEnsured = false;
+
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
-    await ensureCurationTables(env.DB);
+    if (!tablesEnsured) {
+      await ensureCurationTables(env.DB);
+      tablesEnsured = true;
+    }
     const sessionUser = await validateSession(request, env);
     const body = (await request.json().catch(() => ({}))) as ApprovePayload;
     const memeId = (body.meme_id || "").trim();

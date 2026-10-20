@@ -28,16 +28,19 @@ export async function fetchNextMeme(
   filter: string = "unreviewed",
   currentId?: string,
   direction: "next" | "prev" = "next",
-  includeStats: boolean = false
+  includeStats: boolean = false,
+  limit?: number
 ): Promise<{
   meme: CurateMemeItem | null;
-  stats: { total: number; reviewed: number; remaining: number; current_index: number };
+  memes?: CurateMemeItem[];
+  stats: { total: number; reviewed: number; remaining: number; current_index: number } | null;
 }> {
   const query = new URLSearchParams();
   if (filter) query.set("filter", filter);
   if (currentId) query.set("current_id", currentId);
   if (direction) query.set("direction", direction);
   if (includeStats) query.set("include_stats", "true");
+  if (limit && limit > 1) query.set("limit", String(limit));
 
   const res = await fetch(`/api/curate/next?${query.toString()}`, {
     headers: getAuthHeaders(),

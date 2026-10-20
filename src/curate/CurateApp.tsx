@@ -179,78 +179,271 @@ export default function CurateApp() {
     setViewMode("judge");
   };
 
+  interface HistoryEntry {
+    meme: CurateMemeItem;
+    status: CorpusStatus | null;
+    topics: string[];
+    tone: string | null;
+    mechanisms: string[];
+    duplicateOf: string;
+    note: string;
+    overrideMode: boolean;
+  }
+
+  const prefetchQueueRef = useRef<CurateMemeItem[]>([]);
+  const historyStackRef = useRef<HistoryEntry[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const historyIndexRef = useRef<number>(-1);
+  useEffect(() => {
+    historyIndexRef.current = historyIndex;
+  }, [historyIndex]);
+  const isPrefetchingRef = useRef<boolean>(false);
+
   const preloadImage = (url: string) => {
     if (!url) return;
     const img = new Image();
     img.src = url;
   };
 
-  const loadMeme = useCallback(async (
-    currentId?: string,
-    direction: "next" | "prev" = "next",
-    includeStats: boolean = false
-  ): Promise<CurateMemeItem | null> => {
-    if (!token) return null;
+  const applyMemeToForm = useCallback((meme: CurateMemeItem, savedEntry?: HistoryEntry) => {
+    if (savedEntry) {
+      setStatus(savedEntry.status);
+      setTopics(savedEntry.topics);
+      setTone(savedEntry.tone);
+      setMechanisms(savedEntry.mechanisms);
+      setDuplicateOf(savedEntry.duplicateOf);
+      setNote(savedEntry.note);
+      setOverrideMode(savedEntry.overrideMode);
+      return;
+    }
+
+    if (meme.curation) {
+      setStatus(meme.curation.corpus_status);
+      setTopics(meme.curation.topics || []);
+      setTone(meme.curation.tone || null);
+      setMechanisms(meme.curation.humour_mechanisms || []);
+      setDuplicateOf(meme.curation.duplicate_of || "");
+      setNote(meme.curation.curator_note || "");
+      setOverrideMode(true);
+    } else {
+      const j4 = meme.ai_judgements?.judge4;
+      const j5 = meme.ai_judgements?.judge5;
+      let prefill = j4 || j5 || null;
+      if (j4 && j5 && j4.corpus_status === j5.corpus_status && j4.corpus_status !== 'excluded') {
+        prefill = j4;
+      } else if (j4 && j5) {
+        prefill = j4;
+      }
+      setStatus(prefill?.corpus_status || null);
+      setTopics(prefill?.topics || []);
+      setTone(prefill?.tone || null);
+      setMechanisms(prefill?.humour_mechanisms || []);
+      setDuplicateOf(prefill?.duplicate_of || "");
+      setNote("");
+      setOverrideMode(false);
+    }
+  }, []);
+
+  const refillPrefetchQueue = useCallback(async (tailId?: string) => {
+    if (!token || isPrefetchingRef.current) return;
+    if (prefetchQueueRef.current.length >= 4) return;
+
+    isPrefetchingRef.current = true;
+    try {
+      const queue = prefetchQueueRef.current;
+      const targetId = tailId || (queue.length > 0 ? queue[queue.length - 1].id : stateRef.current.currentMeme?.id);
+
+      const res = await fetchNextMeme(filterQueue, targetId, "next", false, 4);
+      const incoming = (res.memes && res.memes.length > 0) ? res.memes : (res.meme ? [res.meme] : []);
+      
+      const existingIds = new Set([
+        stateRef.current.currentMeme?.id,
+        ...prefetchQueueRef.current.map((m) => m.id),
+        ...historyStackRef.current.map((h) => h.meme.id),
+      ]);
+
+      for (const m of incoming) {
+        if (!existingIds.has(m.id)) {
+          preloadImage(m.image_url);
+          prefetchQueueRef.current.push(m);
+          existingIds.add(m.id);
+        }
+      }
+    } catch (err) {
+      console.warn("Background prefetch error:", err);
+    } finally {
+      isPrefetchingRef.current = false;
+    }
+  }, [token, filterQueue]);
+
+  const loadInitialMeme = useCallback(async () => {
+    if (!token) return;
     try {
       setLoading(true);
-      const res = await fetchNextMeme(filterQueue, currentId, direction, includeStats);
-      setCurrentMeme(res.meme);
+      prefetchQueueRef.current = [];
+      historyStackRef.current = [];
+      setHistoryIndex(-1);
+      historyIndexRef.current = -1;
+
+      const res = await fetchNextMeme(filterQueue, undefined, "next", true, 4);
       if (res.stats) {
         setStats(res.stats);
       }
 
-      if (res.meme) {
-        preloadImage(res.meme.image_url);
+      const incoming = (res.memes && res.memes.length > 0) ? res.memes : (res.meme ? [res.meme] : []);
+      if (incoming.length > 0) {
+        const first = incoming[0];
+        setCurrentMeme(first);
+        preloadImage(first.image_url);
+        applyMemeToForm(first);
 
-        if (res.meme.curation) {
-          setStatus(res.meme.curation.corpus_status);
-          setTopics(res.meme.curation.topics || []);
-          setTone(res.meme.curation.tone || null);
-          setMechanisms(res.meme.curation.humour_mechanisms || []);
-          setDuplicateOf(res.meme.curation.duplicate_of || "");
-          setNote(res.meme.curation.curator_note || "");
-          setOverrideMode(true);
-        } else {
-          const j4 = res.meme.ai_judgements?.judge4;
-          const j5 = res.meme.ai_judgements?.judge5;
-          let prefill = j4 || j5 || null;
-          if (j4 && j5 && j4.corpus_status === j5.corpus_status && j4.corpus_status !== 'excluded') {
-            prefill = j4;
-          } else if (j4 && j5) {
-            prefill = j4;
-          }
-          setStatus(prefill?.corpus_status || null);
-          setTopics(prefill?.topics || []);
-          setTone(prefill?.tone || null);
-          setMechanisms(prefill?.humour_mechanisms || []);
-          setDuplicateOf(prefill?.duplicate_of || "");
-          setNote("");
-          setOverrideMode(false);
+        const initialEntry: HistoryEntry = {
+          meme: first,
+          status: first.curation?.corpus_status || null,
+          topics: first.curation?.topics || [],
+          tone: first.curation?.tone || null,
+          mechanisms: first.curation?.humour_mechanisms || [],
+          duplicateOf: first.curation?.duplicate_of || "",
+          note: first.curation?.curator_note || "",
+          overrideMode: false,
+        };
+        historyStackRef.current = [initialEntry];
+        setHistoryIndex(0);
+        historyIndexRef.current = 0;
+
+        const rest = incoming.slice(1);
+        for (const m of rest) {
+          preloadImage(m.image_url);
+          prefetchQueueRef.current.push(m);
         }
+      } else {
+        setCurrentMeme(null);
       }
-      return res.meme;
     } catch (err) {
-      console.error("Error loading meme:", err);
-      return null;
+      console.error("Error loading curation memes:", err);
+      setToast({ message: "Failed to load curation memes", type: "error" });
     } finally {
       setLoading(false);
     }
-  }, [filterQueue, token]);
+  }, [filterQueue, token, applyMemeToForm]);
 
   useEffect(() => {
     if (token && viewMode === "judge") {
-      loadMeme(undefined, "next", true);
+      loadInitialMeme();
     }
-  }, [token, viewMode, filterQueue, loadMeme]);
+  }, [token, viewMode, filterQueue, loadInitialMeme]);
 
-  // Approve current decision (atomic adoption or manual) and advance
+  const handleNavigatePrev = useCallback(() => {
+    const currIdx = historyIndexRef.current;
+    if (currIdx > 0) {
+      const newIdx = currIdx - 1;
+      setHistoryIndex(newIdx);
+      historyIndexRef.current = newIdx;
+      const entry = historyStackRef.current[newIdx];
+      setCurrentMeme(entry.meme);
+      applyMemeToForm(entry.meme, entry);
+    } else {
+      setToast({ message: "At earliest reviewed meme in this session", type: "warning" });
+    }
+  }, [applyMemeToForm]);
+
+  const handleNavigateNext = useCallback(async () => {
+    const currIdx = historyIndexRef.current;
+    if (currIdx < historyStackRef.current.length - 1) {
+      const newIdx = currIdx + 1;
+      setHistoryIndex(newIdx);
+      historyIndexRef.current = newIdx;
+      const entry = historyStackRef.current[newIdx];
+      setCurrentMeme(entry.meme);
+      applyMemeToForm(entry.meme, entry);
+      return;
+    }
+
+    if (prefetchQueueRef.current.length > 0) {
+      const nextMeme = prefetchQueueRef.current.shift()!;
+      setCurrentMeme(nextMeme);
+      applyMemeToForm(nextMeme);
+
+      const newEntry: HistoryEntry = {
+        meme: nextMeme,
+        status: nextMeme.curation?.corpus_status || null,
+        topics: nextMeme.curation?.topics || [],
+        tone: nextMeme.curation?.tone || null,
+        mechanisms: nextMeme.curation?.humour_mechanisms || [],
+        duplicateOf: nextMeme.curation?.duplicate_of || "",
+        note: nextMeme.curation?.curator_note || "",
+        overrideMode: false,
+      };
+      historyStackRef.current.push(newEntry);
+      const newIdx = historyStackRef.current.length - 1;
+      setHistoryIndex(newIdx);
+      historyIndexRef.current = newIdx;
+
+      if (prefetchQueueRef.current.length <= 2) {
+        refillPrefetchQueue(nextMeme.id);
+      }
+    } else {
+      setLoading(true);
+      try {
+        const currentId = stateRef.current.currentMeme?.id;
+        const res = await fetchNextMeme(filterQueue, currentId, "next", false, 4);
+        const incoming = (res.memes && res.memes.length > 0) ? res.memes : (res.meme ? [res.meme] : []);
+        if (incoming.length > 0) {
+          const nextMeme = incoming[0];
+          setCurrentMeme(nextMeme);
+          applyMemeToForm(nextMeme);
+          preloadImage(nextMeme.image_url);
+
+          const newEntry: HistoryEntry = {
+            meme: nextMeme,
+            status: nextMeme.curation?.corpus_status || null,
+            topics: nextMeme.curation?.topics || [],
+            tone: nextMeme.curation?.tone || null,
+            mechanisms: nextMeme.curation?.humour_mechanisms || [],
+            duplicateOf: nextMeme.curation?.duplicate_of || "",
+            note: "",
+            overrideMode: false,
+          };
+          historyStackRef.current.push(newEntry);
+          const newIdx = historyStackRef.current.length - 1;
+          setHistoryIndex(newIdx);
+          historyIndexRef.current = newIdx;
+
+          for (const m of incoming.slice(1)) {
+            preloadImage(m.image_url);
+            prefetchQueueRef.current.push(m);
+          }
+        } else {
+          setToast({ message: "No more memes in this queue", type: "warning" });
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
+  }, [applyMemeToForm, filterQueue, refillPrefetchQueue]);
+
+  // Backward-compatible loadMeme alias for external/shortcut calls
+  const loadMeme = useCallback(async (
+    _currentId?: string,
+    direction: "next" | "prev" = "next",
+    _includeStats: boolean = false
+  ): Promise<CurateMemeItem | null> => {
+    if (direction === "prev") {
+      handleNavigatePrev();
+      return stateRef.current.currentMeme;
+    }
+    await handleNavigateNext();
+    return stateRef.current.currentMeme;
+  }, [handleNavigatePrev, handleNavigateNext]);
+
+  // Approve current decision and advance instantly with 0ms perceived latency
   const handleApproveAndAdvance = useCallback(async (
     source: "manual" | "judge4" | "judge5" | "consensus" = "manual",
     forcedStatus?: CorpusStatus,
     forcedDecision?: AiJudgeDecision | import("./curateTypes").CuratedMemeData
   ): Promise<CurateMemeItem | null> => {
     const s = stateRef.current;
-    if (!s.currentMeme || s.isSaving) return null;
+    if (!s.currentMeme) return null;
 
     const activeStatus = forcedDecision?.corpus_status || forcedStatus || s.status || "keep";
     const activeTopics = forcedDecision ? (forcedDecision.topics || []) : (activeStatus === "keep" ? s.topics : []);
@@ -267,13 +460,12 @@ export default function CurateApp() {
     }
     const activeDuplicateOf = forcedDecision ? (forcedDecision.duplicate_of || null) : (activeStatus === "duplicate" ? s.duplicateOf : null);
 
-    const currentMemeId = s.currentMeme.id;
+    const completedMeme = s.currentMeme;
+    const currentMemeId = completedMeme.id;
 
-    setIsSaving(true);
-    stateRef.current.isSaving = true;
-
+    // 1. Snapshot for undo
     const snapshot: UndoHistoryItem = {
-      meme: s.currentMeme,
+      meme: completedMeme,
       status: activeStatus,
       topics: activeTopics,
       tone: activeTone,
@@ -281,50 +473,120 @@ export default function CurateApp() {
       duplicateOf: activeDuplicateOf || "",
       note: activeNote || ""
     };
-
     setUndoStack((prev) => [...prev.slice(-20), snapshot]);
 
-    let success = false;
-    try {
-      await approveCuration({
-        meme_id: currentMemeId,
-        corpus_status: activeStatus,
-        duplicate_of: activeDuplicateOf,
+    // 2. Update current position in history stack
+    const currIdx = historyIndexRef.current;
+    if (currIdx >= 0 && currIdx < historyStackRef.current.length) {
+      historyStackRef.current[currIdx] = {
+        meme: completedMeme,
+        status: activeStatus,
         topics: activeTopics,
         tone: activeTone,
-        humour_mechanisms: activeMechanisms,
-        curator_note: activeNote,
-        user_id: user?.id,
-        user_name: user?.display_name,
-        adopted_from: source
-      });
-      success = true;
-      // Optimistic local progress increment for seamless 0ms UI advancement
-      setStats((prev) => ({
-        ...prev,
-        reviewed: prev.reviewed + 1,
-        remaining: Math.max(0, prev.remaining - 1)
-      }));
-    } catch (err: unknown) {
+        mechanisms: activeMechanisms,
+        duplicateOf: activeDuplicateOf || "",
+        note: activeNote || "",
+        overrideMode: s.overrideMode
+      };
+    }
+
+    // 3. Reliable Real-Time Reviewed Count increment (never lost or overwritten!)
+    setStats((prev) => ({
+      ...prev,
+      reviewed: prev.reviewed + 1,
+      remaining: Math.max(0, prev.remaining - 1),
+      current_index: prev.current_index + 1
+    }));
+
+    // 4. Non-blocking asynchronous approval API call
+    approveCuration({
+      meme_id: currentMemeId,
+      corpus_status: activeStatus,
+      duplicate_of: activeDuplicateOf,
+      topics: activeTopics,
+      tone: activeTone,
+      humour_mechanisms: activeMechanisms,
+      curator_note: activeNote,
+      user_id: user?.id,
+      user_name: user?.display_name,
+      adopted_from: source
+    }).catch((err: unknown) => {
       console.error("Failed to approve curation decision:", err);
       const errMsg = err instanceof Error ? err.message : "Approval failed";
       setToast({ message: `Save error: ${errMsg}`, type: "error" });
-      return null;
-    } finally {
-      setIsSaving(false);
-      stateRef.current.isSaving = false;
+    });
+
+    // 5. INSTANT 0ms advance to the next buffered meme
+    let nextMeme: CurateMemeItem | null = null;
+    if (prefetchQueueRef.current.length > 0) {
+      nextMeme = prefetchQueueRef.current.shift()!;
+      setCurrentMeme(nextMeme);
+      applyMemeToForm(nextMeme);
+
+      const newEntry: HistoryEntry = {
+        meme: nextMeme,
+        status: nextMeme.curation?.corpus_status || null,
+        topics: nextMeme.curation?.topics || [],
+        tone: nextMeme.curation?.tone || null,
+        mechanisms: nextMeme.curation?.humour_mechanisms || [],
+        duplicateOf: nextMeme.curation?.duplicate_of || "",
+        note: "",
+        overrideMode: false
+      };
+      historyStackRef.current.push(newEntry);
+      const newIdx = historyStackRef.current.length - 1;
+      setHistoryIndex(newIdx);
+      historyIndexRef.current = newIdx;
+
+      if (prefetchQueueRef.current.length <= 2) {
+        refillPrefetchQueue(nextMeme.id);
+      }
+    } else {
+      setLoading(true);
+      try {
+        const res = await fetchNextMeme(filterQueue, currentMemeId, "next", false, 4);
+        const incoming = (res.memes && res.memes.length > 0) ? res.memes : (res.meme ? [res.meme] : []);
+        if (incoming.length > 0) {
+          nextMeme = incoming[0];
+          setCurrentMeme(nextMeme);
+          applyMemeToForm(nextMeme);
+          preloadImage(nextMeme.image_url);
+
+          const newEntry: HistoryEntry = {
+            meme: nextMeme,
+            status: nextMeme.curation?.corpus_status || null,
+            topics: nextMeme.curation?.topics || [],
+            tone: nextMeme.curation?.tone || null,
+            mechanisms: nextMeme.curation?.humour_mechanisms || [],
+            duplicateOf: nextMeme.curation?.duplicate_of || "",
+            note: "",
+            overrideMode: false
+          };
+          historyStackRef.current.push(newEntry);
+          const newIdx = historyStackRef.current.length - 1;
+          setHistoryIndex(newIdx);
+          historyIndexRef.current = newIdx;
+
+          for (const m of incoming.slice(1)) {
+            preloadImage(m.image_url);
+            prefetchQueueRef.current.push(m);
+          }
+        } else {
+          setCurrentMeme(null);
+        }
+      } finally {
+        setLoading(false);
+      }
     }
 
-    if (!success) return null;
-    const nextMeme = await loadMeme(currentMemeId, "next", false);
     return nextMeme;
-  }, [user, loadMeme]);
+  }, [user, applyMemeToForm, filterQueue, refillPrefetchQueue]);
 
   // Mobile Touch Gesture Actions
   const handleSwipeRight = useCallback(async () => {
     const s = stateRef.current;
     const j4 = s.currentMeme?.ai_judgements?.judge4;
-    if (!j4?.corpus_status || s.isSaving) return;
+    if (!j4?.corpus_status) return;
 
     setSwipeAnimation("right");
     const nextMeme = await handleApproveAndAdvance("judge4", j4.corpus_status, j4);
@@ -338,7 +600,7 @@ export default function CurateApp() {
   const handleSwipeLeft = useCallback(async () => {
     const s = stateRef.current;
     const j5 = s.currentMeme?.ai_judgements?.judge5;
-    if (!j5?.corpus_status || s.isSaving) return;
+    if (!j5?.corpus_status) return;
 
     setSwipeAnimation("left");
     const nextMeme = await handleApproveAndAdvance("judge5", j5.corpus_status, j5);
@@ -351,7 +613,7 @@ export default function CurateApp() {
 
   const handleDoubleTap = useCallback(() => {
     const s = stateRef.current;
-    if (!s.currentMeme || s.isSaving || s.forceRemoveLoading) return;
+    if (!s.currentMeme || s.forceRemoveLoading) return;
     setIsPulseRemove(true);
     setTimeout(() => setIsPulseRemove(false), 500);
     setShowForceRemoveModal(true);
@@ -362,7 +624,7 @@ export default function CurateApp() {
   }, []);
 
   const gestures = useCurateGestures({
-    enabled: isMobile && !overrideMode && !showForceRemoveModal && !isSaving,
+    enabled: isMobile && !overrideMode && !showForceRemoveModal,
     handlers: {
       onSwipeRight: handleSwipeRight,
       onSwipeLeft: handleSwipeLeft,
@@ -371,37 +633,63 @@ export default function CurateApp() {
     }
   });
 
-  // Permanently delete invalid/non-meme image from R2 and database
+  // Permanently delete invalid/non-meme image from R2 and database with instant advance
   const handleForceRemove = useCallback(async () => {
     const s = stateRef.current;
-    if (!s.currentMeme || s.forceRemoveLoading || s.isSaving) return;
+    if (!s.currentMeme) return;
     const memeId = s.currentMeme.id;
 
-    setForceRemoveLoading(true);
-    setIsSaving(true);
-    stateRef.current.isSaving = true;
+    setShowForceRemoveModal(false);
+    setForceRemoveReason("");
+    setUndoStack((prev) => prev.filter((item) => item.meme.id !== memeId));
 
-    try {
-      await forceRemoveMeme(memeId);
+    // Update real-time counter immediately
+    setStats((prev) => ({
+      ...prev,
+      total: Math.max(0, prev.total - 1),
+      remaining: Math.max(0, prev.remaining - 1)
+    }));
+
+    // Asynchronously trigger force-remove in background
+    forceRemoveMeme(memeId).then(() => {
       setToast({
         message: "FORCE REMOVED ✓ (Purged from R2 & DB)",
         type: "success"
       });
-      setShowForceRemoveModal(false);
-      setForceRemoveReason("");
-      // Remove any items for this meme from undoStack since deletion is permanent
-      setUndoStack((prev) => prev.filter((item) => item.meme.id !== memeId));
-      await loadMeme(memeId, "next", true);
-    } catch (err: unknown) {
+    }).catch((err: unknown) => {
       const errorMsg = err instanceof Error ? err.message : "Force remove failed";
       console.error("Failed to force-remove meme:", err);
       setToast({ message: errorMsg, type: "error" });
-    } finally {
-      setForceRemoveLoading(false);
-      setIsSaving(false);
-      stateRef.current.isSaving = false;
+    });
+
+    // Instantly advance to next meme from prefetch buffer
+    if (prefetchQueueRef.current.length > 0) {
+      const nextMeme = prefetchQueueRef.current.shift()!;
+      setCurrentMeme(nextMeme);
+      applyMemeToForm(nextMeme);
+
+      const newEntry: HistoryEntry = {
+        meme: nextMeme,
+        status: nextMeme.curation?.corpus_status || null,
+        topics: nextMeme.curation?.topics || [],
+        tone: nextMeme.curation?.tone || null,
+        mechanisms: nextMeme.curation?.humour_mechanisms || [],
+        duplicateOf: nextMeme.curation?.duplicate_of || "",
+        note: "",
+        overrideMode: false
+      };
+      historyStackRef.current.push(newEntry);
+      const newIdx = historyStackRef.current.length - 1;
+      setHistoryIndex(newIdx);
+      historyIndexRef.current = newIdx;
+
+      if (prefetchQueueRef.current.length <= 2) {
+        refillPrefetchQueue(nextMeme.id);
+      }
+    } else {
+      handleNavigateNext();
     }
-  }, [loadMeme]);
+  }, [applyMemeToForm, refillPrefetchQueue, handleNavigateNext]);
 
   const handleToggleNsfw = useCallback(async () => {
     const meme = stateRef.current.currentMeme;
@@ -529,16 +817,12 @@ export default function CurateApp() {
       // Prev / Next on Left/Right Arrows (Available in both modes)
       if (e.key === "ArrowLeft") {
         e.preventDefault();
-        if (stateRef.current.currentMeme) {
-          loadMeme(stateRef.current.currentMeme.id, "prev");
-        }
+        handleNavigatePrev();
         return;
       }
       if (e.key === "ArrowRight") {
         e.preventDefault();
-        if (stateRef.current.currentMeme) {
-          loadMeme(stateRef.current.currentMeme.id, "next");
-        }
+        handleNavigateNext();
         return;
       }
 
@@ -1134,7 +1418,7 @@ export default function CurateApp() {
                 <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                   <button
                     type="button"
-                    onClick={() => loadMeme(currentMeme.id, "prev")}
+                    onClick={handleNavigatePrev}
                     style={{ background: "#222", border: "1px solid #444", color: "#fff", padding: "4px 8px", fontSize: "11px", cursor: "pointer" }}
                     title="Previous"
                   >
@@ -1142,7 +1426,7 @@ export default function CurateApp() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => loadMeme(currentMeme.id, "next")}
+                    onClick={handleNavigateNext}
                     style={{ background: "#222", border: "1px solid #444", color: "#fff", padding: "4px 8px", fontSize: "11px", cursor: "pointer" }}
                     title="Next"
                   >
@@ -1153,42 +1437,16 @@ export default function CurateApp() {
             )}
           </section>
 
-          {/* 3. Mobile Quick Action Tap Buttons Bar */}
+          {/* 3. Mobile Quick Action Tap Buttons Bar (2-Column Enlarged: Override + Force Remove) */}
           {!overrideMode && currentMeme && (
             <div className="curate-mobile-quick-actions">
-              <button
-                type="button"
-                className="curate-mobile-action-btn curate-mobile-action-btn--j4"
-                onClick={handleSwipeRight}
-                disabled={isSaving || !currentMeme.ai_judgements?.judge4?.corpus_status}
-                style={{
-                  opacity: currentMeme.ai_judgements?.judge4?.corpus_status ? 1 : 0.4
-                }}
-              >
-                <span>ADOPT J4</span>
-                <span style={{ fontSize: "10px", opacity: 0.8 }}>→ SWIPE</span>
-              </button>
-
-              <button
-                type="button"
-                className="curate-mobile-action-btn curate-mobile-action-btn--j5"
-                onClick={handleSwipeLeft}
-                disabled={isSaving || !currentMeme.ai_judgements?.judge5?.corpus_status}
-                style={{
-                  opacity: currentMeme.ai_judgements?.judge5?.corpus_status ? 1 : 0.4
-                }}
-              >
-                <span>ADOPT J5</span>
-                <span style={{ fontSize: "10px", opacity: 0.8 }}>← SWIPE</span>
-              </button>
-
               <button
                 type="button"
                 className="curate-mobile-action-btn curate-mobile-action-btn--override"
                 onClick={() => setOverrideMode(true)}
               >
-                <span>✏️ OVERRIDE</span>
-                <span style={{ fontSize: "10px", opacity: 0.8 }}>↑ SWIPE</span>
+                <span>✏️ MANUAL OVERRIDE</span>
+                <span style={{ fontSize: "10px", opacity: 0.8 }}>SWIPE ↑</span>
               </button>
 
               <button
@@ -1197,8 +1455,8 @@ export default function CurateApp() {
                 onClick={() => setShowForceRemoveModal(true)}
                 disabled={forceRemoveLoading}
               >
-                <span>🗑️ REMOVE</span>
-                <span style={{ fontSize: "10px", opacity: 0.8 }}>×2 TAP</span>
+                <span>🗑️ FORCE REMOVE</span>
+                <span style={{ fontSize: "10px", opacity: 0.8 }}>DOUBLE TAP</span>
               </button>
             </div>
           )}
@@ -1400,7 +1658,7 @@ export default function CurateApp() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => loadMeme(currentMeme.id, "prev")}
+                    onClick={handleNavigatePrev}
                     style={{ background: "#222", border: "1px solid #444", color: "#fff", padding: "4px 8px", fontSize: "11px", cursor: "pointer" }}
                     title="Previous Meme (Left Arrow)"
                   >
@@ -1408,7 +1666,7 @@ export default function CurateApp() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => loadMeme(currentMeme.id, "next")}
+                    onClick={handleNavigateNext}
                     style={{ background: "#222", border: "1px solid #444", color: "#fff", padding: "4px 8px", fontSize: "11px", cursor: "pointer" }}
                     title="Next Meme (Right Arrow)"
                   >

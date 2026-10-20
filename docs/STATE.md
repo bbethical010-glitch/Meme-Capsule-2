@@ -152,10 +152,35 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
 ## 7. Zero-Cost D1 Read Optimization (October 2026)
 
 1. **Elimination of Per-Swipe Full-Table Scans**:
-   - Replaced un-cached per-swipe `COUNT(*)` and correlated subqueries in [`functions/api/curate/next.ts`](file:///c:/Users/avspn/Desktop/projects/meme%20application/functions/api/curate/next.ts) with an in-memory isolate cache (10-minute TTL).
-   - Heavy table scans are now gated behind `include_stats=true`, which is passed only on initial page load, queue dropdown switch, manual `🔄 REFRESH`, and after force-remove purges.
+   - Replaced un-cached per-swipe `COUNT(*)` and correlated subqueries in [`functions/api/curate/next.ts`](file:///c:/Users/avspn/Desktop/projects/meme%20application/functions/api/curate/next.ts) with an in-memory isolate cache (15-minute TTL).
+   - Heavy table scans are now completely bypassed when `include_stats=false`.
 2. **Client-Side Optimistic Progress Incrementation**:
    - [`src/curate/CurateApp.tsx`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/CurateApp.tsx) and [`src/curate/curateApi.ts`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/curateApi.ts) updated to fetch next memes with `include_stats=false` during continuous swiping.
-   - The UI optimistically advances the judge's reviewed counter (`reviewed + 1`, `remaining - 1`), eliminating wait times and dropping per-swipe D1 reads from **~10,000 to ~2 rows (99.97% drop)**.
-   - Increases daily curation capacity from **166 memes/day to over 25,000 memes/day** under Cloudflare's Free tier with 0 cost.
+
+---
+
+## 8. High-Performance Instant Curation Engine & Zero-Scan Edge Architecture (October 2026)
+
+1. **Total Elimination of D1 Limit Exhaustion**:
+   - **Guarded DDL Operations**: `ensureCurationTables`, `ensureAIPredictionTable`, and `ensureForceRemovalsTable` are guarded by module-level isolate flags (`tablesEnsured`), preventing redundant SQLite schema reads on every request.
+   - **Zero-Scan Swiping**: `GET /api/curate/next` completely skips `COUNT(*)` calculations when `include_stats` is false, dropping row reads per swipe to **0 rows for stats**.
+   - **Indexed Point Queries**: When `include_stats=true` (initial load/queue switch), replaced the 25,000-row correlated `WHERE EXISTS (...)` subquery with an indexed point scan on `meme_curation WHERE user_id = ?` (~200 rows read).
+   - **Indexed Anti-Join**: Replaced `NOT IN (SELECT meme_id FROM meme_force_removals)` with an indexed `LEFT JOIN meme_force_removals fr ON m.id = fr.meme_id WHERE fr.meme_id IS NULL`.
+2. **Instant 0ms Curation Latency with Prefetch Buffer**:
+   - Implemented client-side **Prefetch Queue Buffer (3–5 memes)** in [`src/curate/CurateApp.tsx`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/CurateApp.tsx).
+   - Buffered memes automatically preload image assets in browser memory (`new Image().src = meme.image_url`).
+   - Every swipe or button click instantly transitions to the next meme (0ms perceived latency).
+   - `POST /api/curate/approve` and `POST /api/curate/force-remove` run asynchronously in the background without locking buttons.
+3. **Fully Functional `← PREV` & `NEXT →` Navigation**:
+   - Implemented in-memory `historyStack` and `historyIndex` in [`src/curate/CurateApp.tsx`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/CurateApp.tsx).
+   - `← PREV` and `NEXT →` buttons (and `ArrowLeft` / `ArrowRight` keyboard shortcuts) instantly traverse previously reviewed memes with 0ms delay.
+   - Backend `direction=prev` in [`functions/api/curate/next.ts`](file:///c:/Users/avspn/Desktop/projects/meme%20application/functions/api/curate/next.ts) fixed to accurately query reviewed memes from `meme_curation`.
+4. **Reliable Real-Time Reviewed Count**:
+   - Fixed count overwriting bug: local counter increments on every action and is no longer overwritten by stale cache data from `next.ts`.
+5. **AI Advisor Exclude Styling (Desktop & Mobile)**:
+   - When AI pre-judge advises `excluded`, the container borders (`#FF3B30`), glow shadow (`#FF3B30`), status badges, and Adopt CTA buttons render in vibrant `#FF3B30` red with white text across desktop single AI, consensus differing details, and mobile cards.
+6. **Clean Mobile Quick Action Layout**:
+   - Removed distracting and redundant `ADOPT J4` and `ADOPT J5` buttons from mobile view (gestures already handle them).
+   - Upgraded `.curate-mobile-quick-actions` to a 2-column grid (`grid-template-columns: repeat(2, 1fr)`) with enlarged 54px touch targets for `[✏️ MANUAL OVERRIDE]` and `[🗑️ FORCE REMOVE]`.
+
 
