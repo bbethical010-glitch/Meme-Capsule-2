@@ -1554,23 +1554,29 @@ meme application/
 │   │   ├── 011_force_removals.sql
 │   │   ├── 011_reconcile_active_and_curation_sync.sql
 │   │   ├── 012_add_curation_status_to_memes.sql
-│   │   └── 013_add_nsfw_flag.sql                     # D1 migration 013: is_nsfw & nsfw_flagged_by columns
+│   │   ├── 013_add_nsfw_flag.sql                     # D1 migration 013: is_nsfw & nsfw_flagged_by columns
+│   │   └── 014_add_resolved_curation_fields.sql
 │   ├── schema.sql                                    # SQLite schema for meme metadata
 │   └── seed.sql
 ├── docs                                              # Dedicated project documentation folder
 │   ├── planning                                      # Project planning and roadmap (in docs/)
 │   │   ├── AI-SPEC.md
+│   │   ├── Multi-Judge Majority Consensus — curate Implementation Prompt.md
 │   │   └── ROADMAP.md                                # Phase-by-phase development plan
+│   ├── superpowers
+│   │   └── plans
 │   ├── AGENT_RULES.md
 │   ├── AGENTS.md
 │   ├── AI_PREJUDGE_CURATE_ANALYSIS.md
 │   ├── CHANGELOG.md                                  # Version history
 │   ├── CLAUDE.md                                     # Development setup & commands guide
 │   ├── CLOUDFLARE_D1_USAGE_AND_OPTIMIZATION_REPORT.md
+│   ├── CLOUDFLARE_FREE_TIER_CAPACITY_AUDIT.md
 │   ├── CLOUDFLARE_LIMITS_AND_SCALING_RESEARCH.md
 │   ├── DATABASE.md                                   # Database and storage architecture docs
 │   ├── FORCE_REMOVE_FEATURE.md
 │   ├── GEMINI.md
+│   ├── majority-consensus-curation-walkthrough.md
 │   ├── MEME_CAPSULE_KNOWLEDGE.md
 │   ├── PRIVACY_COOKIES_AND_DATA_FLOWS.md
 │   ├── PROJECT_STRUCTURE.md                          # This file
@@ -1588,8 +1594,10 @@ meme application/
 │   │   ├── catConsensus.ts
 │   │   ├── crypto.ts
 │   │   ├── curateDb.ts
+│   │   ├── curationConsensus.ts
 │   │   ├── d1r2.ts                                   # D1 + R2 helper (NEW — replaces supabase.ts)
 │   │   ├── fallbackMemes.ts                          # Static fallback memes for offline/empty DB
+│   │   ├── forceRemove.ts
 │   │   └── pages.ts                                  # Cloudflare Pages type definitions
 │   ├── api                                           # API route handlers
 │   │   ├── admin                                     # Admin dashboard
@@ -1723,6 +1731,8 @@ meme application/
 │   │   ├── CatLogin.tsx
 │   │   ├── catTypes.ts
 │   │   └── useCatAuth.ts
+│   ├── components
+│   │   └── AutoRefreshControl.tsx
 │   ├── curate
 │   │   ├── ai-judge
 │   │   │   ├── aiJudgeClient.ts
@@ -1745,7 +1755,9 @@ meme application/
 │   │   ├── CurateLogin.tsx
 │   │   ├── curateTypes.ts
 │   │   ├── CurationStatsModal.tsx
-│   │   └── EditorialButtons.tsx
+│   │   ├── EditorialButtons.tsx
+│   │   ├── useCurateGestures.ts
+│   │   └── useIsMobile.ts
 │   ├── data                                          # Static data
 │   │   └── fallbackMemes.ts                          # Static fallback memes for offline/empty DB
 │   ├── lib                                           # Utility modules
@@ -1757,12 +1769,16 @@ meme application/
 │   ├── main.tsx                                      # React entry point and router
 │   ├── types.ts                                      # TypeScript type definitions (Meme, Rarity, etc.)
 │   └── vite-env.d.ts                                 # Vite environment type augmentation
+├── tests
+│   └── curationConsensus.test.mjs
 ├── workers
 │   └── analyticsAggregator.ts
 ├── .dev.vars
 ├── .dev.vars.example                                 # Environment variable template
 ├── .env
 ├── .gitignore                                        # Git ignore rules
+├── AGENT_RULES.md
+├── AGENTS.md
 ├── converted.pdf
 ├── FORCE_REMOVE_IMPLEMENTATION.md
 ├── FORCE_REMOVE_TODO.md

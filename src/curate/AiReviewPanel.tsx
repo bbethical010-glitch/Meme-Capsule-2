@@ -6,6 +6,7 @@ interface AiReviewPanelProps {
   onEnterOverride: () => void;
   onAdopt: (j: CuratedMemeData, source: "judge4" | "judge5" | "consensus") => void;
   onForceRemove: () => void;
+  isMobile?: boolean;
 }
 
 export default function AiReviewPanel({
@@ -13,7 +14,8 @@ export default function AiReviewPanel({
   j5,
   onEnterOverride,
   onAdopt,
-  onForceRemove
+  onForceRemove,
+  isMobile = false
 }: AiReviewPanelProps) {
   const hasJ4 = Boolean(j4?.corpus_status);
   const hasJ5 = Boolean(j5?.corpus_status);
@@ -105,6 +107,185 @@ export default function AiReviewPanel({
       </div>
     );
   };
+
+  if (isMobile) {
+    return (
+      <div className="curate-mobile-ai-strip">
+        {bothEvaluated && isStatusConsensus && (
+          <div
+            className="curate-mobile-ai-card"
+            style={{
+              borderColor: j4!.corpus_status === "keep" ? "#34C759" : "#FF3B30",
+              boxShadow: `3px 3px 0px ${j4!.corpus_status === "keep" ? "#34C759" : "#FF3B30"}`
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontFamily: "Anton", fontSize: "16px", color: j4!.corpus_status === "keep" ? "#34C759" : "#FF3B30", letterSpacing: "0.5px" }}>
+                ✓ AI CONSENSUS: {j4!.corpus_status.toUpperCase()}
+              </span>
+              <span style={{ fontSize: "10px", background: "#262626", color: "#f4c300", padding: "2px 6px", fontFamily: "monospace" }}>
+                J4 & J5 AGREE
+              </span>
+            </div>
+            {j4!.corpus_status === "keep" && (
+              <div style={{ fontSize: "11px", color: "#aaa", marginTop: "4px" }}>
+                {j4!.topics.join(", ") || "No topics"} · {j4!.tone || "No tone"}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+              <button
+                type="button"
+                onClick={() => onAdopt(j4!, "consensus")}
+                style={{
+                  flex: 1,
+                  background: j4!.corpus_status === "keep" ? "#34C759" : "#FF3B30",
+                  color: j4!.corpus_status === "keep" ? "#121212" : "#ffffff",
+                  border: "none",
+                  padding: "8px",
+                  fontFamily: "Anton",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                  letterSpacing: "0.5px"
+                }}
+              >
+                ➔ ADOPT (SWIPE →)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {bothEvaluated && !isStatusConsensus && (
+          <div
+            className="curate-mobile-ai-card"
+            style={{
+              borderColor: "#FF9F0A",
+              boxShadow: "3px 3px 0px #FF9F0A"
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+              <span style={{ fontFamily: "Anton", fontSize: "15px", color: "#FF9F0A", letterSpacing: "0.5px" }}>
+                ⚠️ AI CONFLICT
+              </span>
+              <span style={{ fontSize: "10px", color: "#aaa" }}>
+                Swipe left/right to arbitrate
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              <button
+                type="button"
+                onClick={() => onAdopt(j4!, "judge4")}
+                style={{
+                  background: "#1c1b1b",
+                  border: `2px solid ${j4!.corpus_status === "keep" ? "#34C759" : "#FF3B30"}`,
+                  color: "#fff",
+                  padding: "8px",
+                  fontFamily: "Anton",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  textAlign: "center"
+                }}
+              >
+                <div style={{ color: "#c58cff" }}>J4 → {j4!.corpus_status.toUpperCase()}</div>
+                <div style={{ fontSize: "10px", color: "#34C759", marginTop: "2px" }}>SWIPE RIGHT →</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => onAdopt(j5!, "judge5")}
+                style={{
+                  background: "#1c1b1b",
+                  border: `2px solid ${j5!.corpus_status === "keep" ? "#34C759" : "#FF3B30"}`,
+                  color: "#fff",
+                  padding: "8px",
+                  fontFamily: "Anton",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  textAlign: "center"
+                }}
+              >
+                <div style={{ color: "#c58cff" }}>J5 → {j5!.corpus_status.toUpperCase()}</div>
+                <div style={{ fontSize: "10px", color: "#5AC8FA", marginTop: "2px" }}>← SWIPE LEFT</div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {((hasJ4 && !hasJ5) || (!hasJ4 && hasJ5)) && (() => {
+          const singleJudge = j4 || j5!;
+          const isJ4 = hasJ4;
+          const isKeep = singleJudge.corpus_status === "keep";
+          return (
+            <div
+              className="curate-mobile-ai-card"
+              style={{
+                borderColor: "#f4c300",
+                boxShadow: "3px 3px 0px #f4c300"
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontFamily: "Anton", fontSize: "15px", color: "#f4c300", letterSpacing: "0.5px" }}>
+                  🔶 {isJ4 ? "AI JUDGE 4" : "AI JUDGE 5"}: {singleJudge.corpus_status.toUpperCase()}
+                </span>
+                <span style={{ fontSize: "10px", color: "#aaa" }}>
+                  Swipe {isJ4 ? "→" : "←"} to adopt
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onAdopt(singleJudge, isJ4 ? "judge4" : "judge5")}
+                style={{
+                  width: "100%",
+                  marginTop: "8px",
+                  background: isKeep ? "#34C759" : "#f4c300",
+                  color: "#121212",
+                  border: "none",
+                  padding: "8px",
+                  fontFamily: "Anton",
+                  fontSize: "13px",
+                  cursor: "pointer"
+                }}
+              >
+                ADOPT {isJ4 ? "J4 (SWIPE →)" : "J5 (SWIPE ←)"}
+              </button>
+            </div>
+          );
+        })()}
+
+        {!hasJ4 && !hasJ5 && (
+          <div
+            className="curate-mobile-ai-card"
+            style={{
+              borderColor: "#555",
+              textAlign: "center",
+              padding: "10px 14px"
+            }}
+          >
+            <div style={{ color: "#f4c300", fontFamily: "Anton", fontSize: "14px" }}>
+              NO AI PRE-JUDGEMENT
+            </div>
+            <div style={{ fontSize: "11px", color: "#888", margin: "4px 0" }}>
+              Swipe up (↑) or tap to curate manually
+            </div>
+            <button
+              type="button"
+              onClick={onEnterOverride}
+              style={{
+                background: "#9b30ff",
+                color: "#fff",
+                border: "none",
+                padding: "6px 14px",
+                fontFamily: "Anton",
+                fontSize: "12px",
+                cursor: "pointer",
+                marginTop: "4px"
+              }}
+            >
+              ✏️ OPEN MANUAL OVERRIDE
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginBottom: "20px" }}>

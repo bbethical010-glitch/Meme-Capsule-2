@@ -85,6 +85,13 @@ The database `meme-capsule-db` (SQLite at the edge) operates under 14 sequential
 - Media synchronization engine in `/admin` ensuring D1 metadata matches physical R2 storage objects.
 
 - **`/curate`**: Multi-judge consensus curation dashboard with keyboard shortcuts (`K`, `X`, `D`, `R`), fast-approval of AI Consensus (`Space`/`Enter`), instant single-AI adoption, three-human majority finalization (`POST /api/curate/approve`) with arbitration on unresolved outcomes, destructive Force Remove (`Shift+Delete` / `POST /api/curate/force-remove`), Superadmin dashboard view with force removal audit, judge account management, judge-isolated AI presets, and CSV/JSON export. Deeply integrates the **AI-Judgement Review Workflow** with AI Judges 4 and 5.
+  - **Mobile Curation Experience (<768px)**: Seamless, touch-first responsive curation preserving desktop experience pixel-for-pixel:
+    - **Touch Gesture Engine**: Swipe Right to adopt AI Judge 4, Swipe Left to adopt AI Judge 5, Double-Tap to trigger Force Remove modal (with haptic vibration), and Swipe Up to enter Manual Override.
+    - **Server-Confirmed Advancement**: Card transitions only execute after successful `POST /api/curate/approve` response, snapping back with an error toast on network failure.
+    - **Dynamic Aspect Ratio**: Cards render at natural image dimensions with a safe viewport cap instead of desktop fixed 68vh boxes.
+    - **Compact AI Preview Strip**: Displays consensus verdicts and directional hints above the meme stage.
+    - **Role-Based AI Console Gating**: Continuous AI Judge Console is hidden from human judges (1–3) on all viewports, visible to judge4/5 operators on desktop only.
+    - **Quick Action Bar & Gesture Footer**: Complete touch alternatives for non-gesture accessibility.
 - **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, and dark mode.
 - **`/categorise`**: Multi-topic taxonomy tagging, tone labeling, and humor mechanism tagging.
 - **`/ai-judge`**: Multimodal AI pre-curator loop powered by NVIDIA NIM Llama 3.2 Vision and universal vision models.
