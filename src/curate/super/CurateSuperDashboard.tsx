@@ -9,7 +9,6 @@ import {
 } from "./curateSuperApi";
 import CuratorComparisonTable from "./CuratorComparisonTable";
 import ForceRemovalAudit from "../../categorise/superadmin/ForceRemovalAudit";
-import AutoRefreshControl from "../../components/AutoRefreshControl";
 
 interface CurateSuperDashboardProps {
   onSwitchToJudgeMode: () => void;
@@ -56,6 +55,18 @@ export default function CurateSuperDashboard({
     loadData();
   }, [loadData]);
 
+  // Intercept Ctrl+R / Cmd+R to silently refresh dashboard data without full page reload
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        loadData();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [loadData]);
+
   const handleBulkResolve = async (action: string) => {
     if (!confirm(`Are you sure you want to batch-resolve all ${action.replace("_", " ")} memes?`)) {
       return;
@@ -91,12 +102,27 @@ export default function CurateSuperDashboard({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <AutoRefreshControl
-            onRefresh={loadData}
-            isRefreshing={loading}
-            storageKey="curate_super_autorefresh"
-            defaultInterval={10000}
-          />
+          <button
+            type="button"
+            onClick={loadData}
+            disabled={loading}
+            style={{
+              background: "#222",
+              border: "1px solid #f4c300",
+              color: "#f4c300",
+              padding: "6px 14px",
+              fontFamily: "Anton",
+              fontSize: "12px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px"
+            }}
+            title="Refresh dashboard data (or press Ctrl+R)"
+          >
+            <span>🔄</span>
+            {loading ? "REFRESHING..." : "REFRESH DATA (Ctrl+R)"}
+          </button>
 
           <button
             type="button"
@@ -333,7 +359,45 @@ export default function CurateSuperDashboard({
           </div>
 
           {/* Batch Actions & Exports */}
-          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => handleBulkResolve("majority_keep")}
+              disabled={batchLoading}
+              style={{
+                background: "#1c2b1e",
+                border: "2px solid #34C759",
+                color: "#34C759",
+                padding: "6px 14px",
+                fontFamily: "Anton",
+                fontSize: "12px",
+                cursor: "pointer",
+                boxShadow: "0 0 10px rgba(52, 199, 89, 0.2)"
+              }}
+              title="Bulk resolve all memes with 2:1 human majority keep"
+            >
+              ⚡ INSTANT RESOLVE MAJORITY KEEPS {summary?.consensus_metrics?.majority_keep ? `(${summary.consensus_metrics.majority_keep})` : ""}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleBulkResolve("majority_exclude")}
+              disabled={batchLoading}
+              style={{
+                background: "#2b1c1c",
+                border: "2px solid #FF3B30",
+                color: "#FF3B30",
+                padding: "6px 14px",
+                fontFamily: "Anton",
+                fontSize: "12px",
+                cursor: "pointer",
+                boxShadow: "0 0 10px rgba(255, 59, 48, 0.2)"
+              }}
+              title="Bulk resolve all memes with 2:1 human majority exclude"
+            >
+              ⚡ INSTANT RESOLVE MAJORITY EXCLUDES {summary?.consensus_metrics?.majority_exclude ? `(${summary.consensus_metrics.majority_exclude})` : ""}
+            </button>
+
             <button
               type="button"
               onClick={() => handleBulkResolve("unanimous_keep")}

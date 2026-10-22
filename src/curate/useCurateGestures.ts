@@ -3,7 +3,6 @@ import { useRef, useState, useCallback } from "react";
 export interface GestureHandlers {
   onSwipeRight?: () => void;
   onSwipeLeft?: () => void;
-  onSwipeUp?: () => void;
   onDoubleTap?: () => void;
 }
 
@@ -24,7 +23,7 @@ export function useCurateGestures({
 }: UseCurateGesturesOptions) {
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
-  const [swipePreview, setSwipePreview] = useState<"right" | "left" | "up" | null>(null);
+  const [swipePreview, setSwipePreview] = useState<"right" | "left" | null>(null);
 
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
@@ -52,15 +51,16 @@ export function useCurateGestures({
       const dx = touch.clientX - touchStartRef.current.x;
       const dy = touch.clientY - touchStartRef.current.y;
 
-      setDragOffset({ x: dx, y: dy });
-
       const absDx = Math.abs(dx);
       const absDy = Math.abs(dy);
 
+      // Only engage card dragging if horizontal swipe is dominant (prevents hijacking vertical page scrolls)
+      if (absDx > absDy * 0.8) {
+        setDragOffset({ x: dx, y: 0 });
+      }
+
       if (absDx > 40 && absDx > absDy * 1.2) {
         setSwipePreview(dx > 0 ? "right" : "left");
-      } else if (dy < -40 && absDy > absDx * 1.2) {
-        setSwipePreview("up");
       } else {
         setSwipePreview(null);
       }
@@ -98,12 +98,6 @@ export function useCurateGestures({
         } else {
           handlers.onSwipeLeft?.();
         }
-        return;
-      }
-
-      // 2. Vertical Swipe Up (Open Manual Override)
-      if (dy <= -70 && absDy > absDx * 1.3 && velocity >= 0.2) {
-        handlers.onSwipeUp?.();
         return;
       }
 

@@ -85,14 +85,19 @@ The database `meme-capsule-db` (SQLite at the edge) operates under 14 sequential
 - Media synchronization engine in `/admin` ensuring D1 metadata matches physical R2 storage objects.
 
 - **`/curate`**: Multi-judge consensus curation dashboard with keyboard shortcuts (`K`, `X`, `D`, `R`), fast-approval of AI Consensus (`Space`/`Enter`), instant single-AI adoption, three-human majority finalization (`POST /api/curate/approve`) with arbitration on unresolved outcomes, destructive Force Remove (`Shift+Delete` / `POST /api/curate/force-remove`), Superadmin dashboard view with force removal audit, judge account management, judge-isolated AI presets, and CSV/JSON export. Deeply integrates the **AI-Judgement Review Workflow** with AI Judges 4 and 5.
+  - **Majority Consensus Batch Resolution**: Superadmin dashboard includes `[⚡ INSTANT RESOLVE MAJORITY KEEPS]` and `[⚡ INSTANT RESOLVE MAJORITY EXCLUDES]` CTA buttons calling `/api/curate/super/bulk-resolve` with `majority_keep` and `majority_exclude` actions to batch-resolve 2:1 human consensus memes without individual manual arbitration.
+  - **Cumulative Judge Actions Preservation**: Lifetime judge actions aggregate active votes and purged memes (`active_reviewed + force_removed`), ensuring reviewed counts remain accurate and never regress when non-memes are purged.
+  - **Manual Refresh & Ctrl+R Interception**: Background auto-refresh intervals completely removed from both Curate Super Dashboard and Admin Portal; replaced with instant `[🔄 REFRESH (Ctrl+R)]` manual trigger that intercepts browser refresh commands.
+  - **Already Curated Detection & "Re-curate" Overlay**: When navigating through history, already-curated memes display a neon lock overlay showing the curator's saved decision, topics, and tone, with `[✏️ RE-CURATE THIS MEME]` and `[SKIP TO UNREVIEWED ➔]` actions; mutation hotkeys and swipe gestures are locked to prevent accidental overwrites.
   - **Mobile Curation Experience (<768px)**: Seamless, touch-first responsive curation preserving desktop experience pixel-for-pixel:
-    - **Touch Gesture Engine**: Swipe Right to adopt AI Judge 4, Swipe Left to adopt AI Judge 5, Double-Tap to trigger Force Remove modal (with haptic vibration), and Swipe Up to enter Manual Override.
+    - **APK-Style Stacked Card Deck**: Active card interacts with swipe gestures while preloaded next card (`prefetchQueueRef.current[0]`) sits visible behind it (scaling up from 0.94 to 1 and opacity from 0.65 to 1 dynamically as the user drags).
+    - **Touch Gesture Engine**: Swipe Right to adopt AI Judge 4, Swipe Left to adopt AI Judge 5, Double-Tap to trigger Force Remove modal (with haptic vibration). Vertical swipe-up hijacking removed to allow smooth, native scrolling.
     - **Server-Confirmed Advancement**: Card transitions only execute after successful `POST /api/curate/approve` response, snapping back with an error toast on network failure.
     - **Dynamic Aspect Ratio**: Cards render at natural image dimensions with a safe viewport cap instead of desktop fixed 68vh boxes.
     - **Compact AI Preview Strip**: Displays consensus verdicts and directional hints above the meme stage.
     - **Role-Based AI Console Gating**: Continuous AI Judge Console is hidden from human judges (1–3) on all viewports, visible to judge4/5 operators on desktop only.
-    - **Quick Action Bar & Gesture Footer**: Complete touch alternatives for non-gesture accessibility.
-- **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, and dark mode.
+    - **Quick Action Bar & Gesture Footer**: Complete touch alternatives for non-gesture accessibility; override button labeled "CUSTOM ATTRIBUTES".
+- **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, manual `[🔄 REFRESH (Ctrl+R)]` control, and dark mode.
 - **`/categorise`**: Multi-topic taxonomy tagging, tone labeling, and humor mechanism tagging.
 - **`/ai-judge`**: Multimodal AI pre-curator loop powered by NVIDIA NIM Llama 3.2 Vision and universal vision models.
 - **`/reports`**: Token-gated content safety moderation desk.

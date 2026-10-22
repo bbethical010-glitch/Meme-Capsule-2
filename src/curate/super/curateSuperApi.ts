@@ -32,6 +32,8 @@ export interface SuperSummaryResponse {
     single_review: number;
     unanimous_keep: number;
     unanimous_exclude: number;
+    majority_keep?: number;
+    majority_exclude?: number;
     conflicts: number;
     total_with_reviews: number;
   };

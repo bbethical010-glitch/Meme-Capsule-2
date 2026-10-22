@@ -181,11 +181,10 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       if (!statsCache || isCacheExpired) {
         try {
           const totalRes = await env.DB.prepare("SELECT COUNT(1) as cnt FROM memes").first<{ cnt: number }>();
-          const forceRes = await env.DB.prepare("SELECT COUNT(1) as cnt FROM meme_force_removals").first<{ cnt: number }>();
-          total = Math.max(0, (totalRes?.cnt ?? 0) - (forceRes?.cnt ?? 0));
-        } catch {
-          const totalRes = await env.DB.prepare("SELECT COUNT(1) as cnt FROM memes").first<{ cnt: number }>();
+          // 'memes' table already has force-removed items deleted, so no double subtraction
           total = totalRes?.cnt ?? 0;
+        } catch {
+          total = 0;
         }
 
         statsCache = {
@@ -196,13 +195,17 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         total = statsCache.total;
       }
 
-      // Read reviewed count directly from indexed meme_curation table
+      // Read reviewed count directly from indexed meme_curation table + judge force removals
       // This is an indexed point scan of ~200 rows instead of a 25,000-row table scan
       try {
         const reviewedRes = await env.DB.prepare(
           "SELECT COUNT(1) as cnt FROM meme_curation WHERE user_id = ?"
         ).bind(userId).first<{ cnt: number }>();
-        reviewed = reviewedRes?.cnt ?? 0;
+        const forceUserRes = await env.DB.prepare(
+          "SELECT COUNT(1) as cnt FROM meme_force_removals WHERE removed_by = ?"
+        ).bind(userId).first<{ cnt: number }>().catch(() => null);
+
+        reviewed = (reviewedRes?.cnt ?? 0) + (forceUserRes?.cnt ?? 0);
       } catch {
         reviewed = 0;
       }

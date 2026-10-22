@@ -198,6 +198,19 @@ export default function CurateApp() {
     historyIndexRef.current = historyIndex;
   }, [historyIndex]);
   const isPrefetchingRef = useRef<boolean>(false);
+  const [reCuratingMemeId, setReCuratingMemeId] = useState<string | null>(null);
+
+  // Determine if the currently viewed meme has already been curated by this judge
+  const currentHistoryEntry = (historyIndex >= 0 && historyIndex < historyStackRef.current.length)
+    ? historyStackRef.current[historyIndex]
+    : null;
+  const isAlreadyCurated = Boolean(
+    (currentHistoryEntry && currentHistoryEntry.status !== null) ||
+    (currentMeme?.curation && currentMeme.curation.corpus_status !== null)
+  );
+  const savedStatus = currentHistoryEntry?.status || currentMeme?.curation?.corpus_status || "keep";
+  const savedTopics = currentHistoryEntry?.topics || currentMeme?.curation?.topics || [];
+  const savedTone = currentHistoryEntry?.tone || currentMeme?.curation?.tone || null;
 
   const preloadImage = (url: string) => {
     if (!url) return;
@@ -339,6 +352,7 @@ export default function CurateApp() {
       const newIdx = currIdx - 1;
       setHistoryIndex(newIdx);
       historyIndexRef.current = newIdx;
+      setReCuratingMemeId(null);
       const entry = historyStackRef.current[newIdx];
       setCurrentMeme(entry.meme);
       applyMemeToForm(entry.meme, entry);
@@ -349,6 +363,7 @@ export default function CurateApp() {
 
   const handleNavigateNext = useCallback(async () => {
     const currIdx = historyIndexRef.current;
+    setReCuratingMemeId(null);
     if (currIdx < historyStackRef.current.length - 1) {
       const newIdx = currIdx + 1;
       setHistoryIndex(newIdx);
@@ -421,6 +436,33 @@ export default function CurateApp() {
       }
     }
   }, [applyMemeToForm, filterQueue, refillPrefetchQueue]);
+
+  // Jump directly to the latest unreviewed meme
+  const handleJumpToUnreviewed = useCallback(async () => {
+    const stack = historyStackRef.current;
+    let targetIdx = -1;
+    for (let i = historyIndexRef.current + 1; i < stack.length; i++) {
+      if (!stack[i].status && !stack[i].meme.curation?.corpus_status) {
+        targetIdx = i;
+        break;
+      }
+    }
+
+    if (targetIdx !== -1) {
+      setHistoryIndex(targetIdx);
+      historyIndexRef.current = targetIdx;
+      setReCuratingMemeId(null);
+      const entry = stack[targetIdx];
+      setCurrentMeme(entry.meme);
+      applyMemeToForm(entry.meme, entry);
+      return;
+    }
+
+    setHistoryIndex(stack.length - 1);
+    historyIndexRef.current = stack.length - 1;
+    setReCuratingMemeId(null);
+    await handleNavigateNext();
+  }, [applyMemeToForm, handleNavigateNext]);
 
   // Backward-compatible loadMeme alias for external/shortcut calls
   const loadMeme = useCallback(async (
@@ -619,16 +661,11 @@ export default function CurateApp() {
     setShowForceRemoveModal(true);
   }, []);
 
-  const handleSwipeUp = useCallback(() => {
-    setOverrideMode(true);
-  }, []);
-
   const gestures = useCurateGestures({
-    enabled: isMobile && !overrideMode && !showForceRemoveModal,
+    enabled: isMobile && !overrideMode && !showForceRemoveModal && (!isAlreadyCurated || reCuratingMemeId === currentMeme?.id),
     handlers: {
       onSwipeRight: handleSwipeRight,
       onSwipeLeft: handleSwipeLeft,
-      onSwipeUp: handleSwipeUp,
       onDoubleTap: handleDoubleTap
     }
   });
@@ -814,6 +851,14 @@ export default function CurateApp() {
         return;
       }
 
+      // Intercept Ctrl+R / Cmd+R to silently refresh the current queue/state
+      if ((e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        loadInitialMeme();
+        setToast({ message: "Curation queue refreshed", type: "success" });
+        return;
+      }
+
       // Prev / Next on Left/Right Arrows (Available in both modes)
       if (e.key === "ArrowLeft") {
         e.preventDefault();
@@ -823,6 +868,12 @@ export default function CurateApp() {
       if (e.key === "ArrowRight") {
         e.preventDefault();
         handleNavigateNext();
+        return;
+      }
+
+      // If currently viewing an already curated meme and not in re-curating mode,
+      // lock all decision mutation hotkeys (4, 5, D, R, etc.) to prevent accidental overwrites
+      if (isAlreadyCurated && reCuratingMemeId !== stateRef.current.currentMeme?.id) {
         return;
       }
 
@@ -961,7 +1012,83 @@ export default function CurateApp() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [viewMode, handleApproveAndAdvance, handleForceRemove, handleUndo, handleToggleTopic, handleSelectTone, handleToggleMechanism, loadMeme]);
+  }, [viewMode, handleApproveAndAdvance, handleForceRemove, handleUndo, handleToggleTopic, handleSelectTone, handleToggleMechanism, loadInitialMeme, isAlreadyCurated, reCuratingMemeId]);
+
+  const renderAlreadyCuratedOverlay = () => {
+    if (!isAlreadyCurated || !currentMeme || reCuratingMemeId === currentMeme.id) {
+      return null;
+    }
+
+    const statusLabel =
+      savedStatus === "keep"
+        ? "KEEP / APPROVED"
+        : savedStatus === "excluded"
+        ? "EXCLUDED"
+        : savedStatus === "duplicate"
+        ? "DUPLICATE"
+        : savedStatus === "review_later"
+        ? "REVIEW LATER"
+        : String(savedStatus).toUpperCase();
+
+    const statusBadgeClass =
+      savedStatus === "keep"
+        ? "curate-saved-status-badge--keep"
+        : savedStatus === "excluded"
+        ? "curate-saved-status-badge--excluded"
+        : savedStatus === "duplicate"
+        ? "curate-saved-status-badge--duplicate"
+        : savedStatus === "review_later"
+        ? "curate-saved-status-badge--review_later"
+        : "";
+
+    return (
+      <div className="curate-already-curated-overlay">
+        <div className="curate-already-curated-badge">
+          🔒 MEME ALREADY CURATED
+        </div>
+
+        <div className="curate-already-curated-body">
+          <div style={{ fontSize: "12px", color: "#888", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            Saved Decision by You:
+          </div>
+          <div className={`curate-saved-status-badge ${statusBadgeClass}`}>
+            {statusLabel}
+          </div>
+          {savedTopics && savedTopics.length > 0 && (
+            <div style={{ fontSize: "11px", color: "#aaa", marginTop: "4px" }}>
+              Topics: {savedTopics.join(", ")}
+            </div>
+          )}
+          {savedTone && (
+            <div style={{ fontSize: "11px", color: "#aaa" }}>
+              Tone: {savedTone}
+            </div>
+          )}
+        </div>
+
+        <div className="curate-already-curated-actions">
+          <button
+            type="button"
+            className="curate-recurate-btn"
+            onClick={() => {
+              setReCuratingMemeId(currentMeme.id);
+              setOverrideMode(true);
+            }}
+          >
+            ✏️ RE-CURATE THIS MEME
+          </button>
+
+          <button
+            type="button"
+            className="curate-skip-unreviewed-btn"
+            onClick={handleJumpToUnreviewed}
+          >
+            SKIP TO UNREVIEWED ➔
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   if (!token || !user) {
     return <CurateLogin onLoginSuccess={handleLoginSuccess} />;
@@ -1346,96 +1473,121 @@ export default function CurateApp() {
             />
           )}
 
-          {/* 2. Mobile Dynamic Meme Card with Gestures */}
-          <section
-            className={`curate-meme-card curate-meme-card--mobile ${
-              swipeAnimation === "right"
-                ? "curate-meme-card--swiping-right"
-                : swipeAnimation === "left"
-                ? "curate-meme-card--swiping-left"
-                : swipeAnimation === "up"
-                ? "curate-meme-card--swiping-up"
-                : ""
-            } ${isPulseRemove ? "curate-meme-card--force-remove-pulse" : ""}`}
-            onTouchStart={gestures.onTouchStart}
-            onTouchMove={gestures.onTouchMove}
-            onTouchEnd={gestures.onTouchEnd}
-            onTouchCancel={gestures.onTouchCancel}
-            style={{
-              transform:
-                gestures.isDragging && gestures.dragOffset.x !== 0
-                  ? `translateX(${gestures.dragOffset.x * 0.75}px) rotate(${gestures.dragOffset.x * 0.04}deg)`
-                  : undefined
-            }}
-          >
-            {/* Real-time Gesture Direction Badges */}
-            <div
-              className={`curate-swipe-indicator curate-swipe-indicator--right ${
-                gestures.swipePreview === "right" ? "visible" : ""
-              }`}
-            >
-              ADOPT J4 ✓
-            </div>
-            <div
-              className={`curate-swipe-indicator curate-swipe-indicator--left ${
-                gestures.swipePreview === "left" ? "visible" : ""
-              }`}
-            >
-              ✓ ADOPT J5
-            </div>
-            <div
-              className={`curate-swipe-indicator curate-swipe-indicator--up ${
-                gestures.swipePreview === "up" ? "visible" : ""
-              }`}
-            >
-              ✏️ OVERRIDE
-            </div>
-
-            <div className="curate-meme-display">
-              {loading && !currentMeme ? (
-                <div style={{ color: "#888" }}>LOADING MEME...</div>
-              ) : currentMeme ? (
-                <img
-                  key={currentMeme.id}
-                  src={currentMeme.image_url}
-                  alt={currentMeme.title}
-                  className="curate-meme-img"
-                />
-              ) : (
-                <div style={{ textAlign: "center", color: "#888", padding: "20px" }}>
-                  <h3 className="curate-anton" style={{ color: "#34C759", fontSize: "24px" }}>ALL DONE!</h3>
-                  <p style={{ fontSize: "12px" }}>Switch queues or export your curated dataset.</p>
-                </div>
-              )}
-            </div>
-
-            {currentMeme && (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "8px", borderTop: "1px solid #282828" }}>
-                <div>
-                  <div style={{ fontFamily: "monospace", fontSize: "10px", color: "#888" }}>ID: {currentMeme.id}</div>
-                  <div style={{ fontSize: "13px", fontWeight: "bold", color: "#fff" }}>{currentMeme.title}</div>
-                </div>
-                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                  <button
-                    type="button"
-                    onClick={handleNavigatePrev}
-                    style={{ background: "#222", border: "1px solid #444", color: "#fff", padding: "4px 8px", fontSize: "11px", cursor: "pointer" }}
-                    title="Previous"
-                  >
-                    ←
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleNavigateNext}
-                    style={{ background: "#222", border: "1px solid #444", color: "#fff", padding: "4px 8px", fontSize: "11px", cursor: "pointer" }}
-                    title="Next"
-                  >
-                    →
-                  </button>
+          {/* 2. Mobile Dynamic Meme Card with Gestures & APK-style Stacked Deck */}
+          <div className="curate-mobile-card-stack">
+            {/* Behind Card (prefetched next meme in deck) */}
+            {prefetchQueueRef.current.length > 0 && (
+              <div
+                className="curate-meme-card--behind"
+                style={{
+                  transform:
+                    gestures.isDragging && gestures.dragOffset.x !== 0
+                      ? `scale(${Math.min(1, 0.94 + Math.abs(gestures.dragOffset.x) / 1000)}) translateY(${Math.max(0, 10 - Math.abs(gestures.dragOffset.x) / 25)}px)`
+                      : "scale(0.94) translateY(10px)",
+                  opacity:
+                    gestures.isDragging && gestures.dragOffset.x !== 0
+                      ? Math.min(1, 0.65 + Math.abs(gestures.dragOffset.x) / 600)
+                      : 0.65,
+                  transition: gestures.isDragging ? "none" : "all 0.25s ease"
+                }}
+              >
+                <div className="curate-meme-display" style={{ height: "100%", filter: "blur(0.5px)" }}>
+                  <img
+                    src={prefetchQueueRef.current[0].image_url}
+                    alt="Next meme preview"
+                    className="curate-meme-img"
+                    style={{ opacity: 0.85 }}
+                  />
                 </div>
               </div>
             )}
-          </section>
+
+            <section
+              className={`curate-meme-card curate-meme-card--mobile ${
+                swipeAnimation === "right"
+                  ? "curate-meme-card--swiping-right"
+                  : swipeAnimation === "left"
+                  ? "curate-meme-card--swiping-left"
+                  : swipeAnimation === "up"
+                  ? "curate-meme-card--swiping-up"
+                  : ""
+              } ${isPulseRemove ? "curate-meme-card--force-remove-pulse" : ""}`}
+              onTouchStart={isAlreadyCurated && reCuratingMemeId !== currentMeme?.id ? undefined : gestures.onTouchStart}
+              onTouchMove={isAlreadyCurated && reCuratingMemeId !== currentMeme?.id ? undefined : gestures.onTouchMove}
+              onTouchEnd={isAlreadyCurated && reCuratingMemeId !== currentMeme?.id ? undefined : gestures.onTouchEnd}
+              onTouchCancel={isAlreadyCurated && reCuratingMemeId !== currentMeme?.id ? undefined : gestures.onTouchCancel}
+              style={{
+                transform:
+                  gestures.isDragging && gestures.dragOffset.x !== 0
+                    ? `translateX(${gestures.dragOffset.x * 0.75}px) rotate(${gestures.dragOffset.x * 0.04}deg)`
+                    : undefined,
+                position: "relative"
+              }}
+            >
+              {renderAlreadyCuratedOverlay()}
+
+              {/* Real-time Gesture Direction Badges */}
+              <div
+                className={`curate-swipe-indicator curate-swipe-indicator--right ${
+                  gestures.swipePreview === "right" ? "visible" : ""
+                }`}
+              >
+                ADOPT J4 ✓
+              </div>
+              <div
+                className={`curate-swipe-indicator curate-swipe-indicator--left ${
+                  gestures.swipePreview === "left" ? "visible" : ""
+                }`}
+              >
+                ✓ ADOPT J5
+              </div>
+
+              <div className="curate-meme-display">
+                {loading && !currentMeme ? (
+                  <div style={{ color: "#888" }}>LOADING MEME...</div>
+                ) : currentMeme ? (
+                  <img
+                    key={currentMeme.id}
+                    src={currentMeme.image_url}
+                    alt={currentMeme.title}
+                    className="curate-meme-img"
+                  />
+                ) : (
+                  <div style={{ textAlign: "center", color: "#888", padding: "20px" }}>
+                    <h3 className="curate-anton" style={{ color: "#34C759", fontSize: "24px" }}>ALL DONE!</h3>
+                    <p style={{ fontSize: "12px" }}>Switch queues or export your curated dataset.</p>
+                  </div>
+                )}
+              </div>
+
+              {currentMeme && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "8px", borderTop: "1px solid #282828" }}>
+                  <div>
+                    <div style={{ fontFamily: "monospace", fontSize: "10px", color: "#888" }}>ID: {currentMeme.id}</div>
+                    <div style={{ fontSize: "13px", fontWeight: "bold", color: "#fff" }}>{currentMeme.title}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={handleNavigatePrev}
+                      style={{ background: "#222", border: "1px solid #444", color: "#fff", padding: "4px 8px", fontSize: "11px", cursor: "pointer" }}
+                      title="Previous"
+                    >
+                      ←
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleNavigateNext}
+                      style={{ background: "#222", border: "1px solid #444", color: "#fff", padding: "4px 8px", fontSize: "11px", cursor: "pointer" }}
+                      title="Next"
+                    >
+                      →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
 
           {/* 3. Mobile Quick Action Tap Buttons Bar (2-Column Enlarged: Override + Force Remove) */}
           {!overrideMode && currentMeme && (
@@ -1446,7 +1598,7 @@ export default function CurateApp() {
                 onClick={() => setOverrideMode(true)}
               >
                 <span>✏️ MANUAL OVERRIDE</span>
-                <span style={{ fontSize: "10px", opacity: 0.8 }}>SWIPE ↑</span>
+                <span style={{ fontSize: "10px", opacity: 0.8 }}>CUSTOM ATTRIBUTES</span>
               </button>
 
               <button
@@ -1577,7 +1729,8 @@ export default function CurateApp() {
       ) : (
         <main className="curate-main-grid">
           {/* Left: Large Meme Stage */}
-          <section className="curate-meme-card">
+          <section className="curate-meme-card" style={{ position: "relative" }}>
+            {renderAlreadyCuratedOverlay()}
             <div className="curate-meme-display">
               {loading && !currentMeme ? (
                 <div style={{ color: "#888" }}>LOADING MEME...</div>

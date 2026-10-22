@@ -34,7 +34,6 @@ import type { MemeInputMethod, MemeStatus, Rarity } from "../types";
 import AnalyticsDashboard from "./analytics-dashboard/AnalyticsDashboard";
 import SqlRunner from "./sql-runner/SqlRunner";
 import AiTab from "./ai/AiTab";
-import AutoRefreshControl from "../components/AutoRefreshControl";
 import "./admin.css";
 
 type FormState = Omit<AdminMeme, "tags"> & {
@@ -375,6 +374,18 @@ export default function AdminApp() {
     }
   }, [adminToken]);
 
+  // Intercept Ctrl+R / Cmd+R to refresh admin data without browser page reload
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        handleAutoRefresh();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleAutoRefresh]);
+
   const useLocalMode = () => {
     setCollection(readAdminCollection());
     setBackendMode(false);
@@ -579,12 +590,27 @@ export default function AdminApp() {
               onChange={(e) => setAdminToken(e.target.value)}
             />
           </div>
-          <AutoRefreshControl
-            onRefresh={handleAutoRefresh}
-            isRefreshing={isSyncing}
-            storageKey="meme_admin_autorefresh_interval"
-            defaultInterval={0}
-          />
+          <button
+            onClick={() => handleAutoRefresh()}
+            className="icon-btn brutalist-interactive"
+            title="Refresh Data (Ctrl+R)"
+            disabled={isSyncing}
+            style={{
+              background: "#222",
+              border: "1px solid #f4c300",
+              color: "#f4c300",
+              padding: "6px 12px",
+              fontFamily: "Anton",
+              fontSize: "12px",
+              cursor: isSyncing ? "wait" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px"
+            }}
+          >
+            <span>🔄</span>
+            {isSyncing ? "SYNCING..." : "REFRESH (Ctrl+R)"}
+          </button>
           <button
             onClick={adminToken ? loadBackend : saveToken}
             className="icon-btn brutalist-interactive"

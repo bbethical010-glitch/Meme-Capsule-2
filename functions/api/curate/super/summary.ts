@@ -116,15 +116,20 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       totalForceRemoved = 0;
     }
 
-    const judges = (judgeResults || []).map((j) => ({
-      ...j,
-      total_reviewed: j.total_reviewed || 0,
-      kept: j.kept || 0,
-      excluded: j.excluded || 0,
-      duplicates: j.duplicates || 0,
-      review_later: j.review_later || 0,
-      force_removed: forceRemovedMap.get(j.user_id) || 0
-    }));
+    const judges = (judgeResults || []).map((j) => {
+      const purged = forceRemovedMap.get(j.user_id) || 0;
+      const activeReviewed = j.total_reviewed || 0;
+      return {
+        ...j,
+        total_reviewed: activeReviewed + purged,
+        active_reviewed: activeReviewed,
+        kept: j.kept || 0,
+        excluded: j.excluded || 0,
+        duplicates: j.duplicates || 0,
+        review_later: j.review_later || 0,
+        force_removed: purged
+      };
+    });
 
     // Calculate total exclude votes across all judges
     const totalExcludeVotes = judges.reduce((sum, j) => sum + (j.excluded || 0), 0);
@@ -158,32 +163,66 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       if (statuses.length === 1) {
         singleReview++;
       } else if (statuses.length > 1) {
-      if (statuses.length === 3) {
-        const distinctStatuses = new Set(statuses.map((vote) => vote.corpus_status));
-        if (distinctStatuses.size === 3) {
-          conflicts++;
-        } else {
-          const duplicateVotes = statuses.filter((vote) => vote.corpus_status === "duplicate");
-          if (
-            duplicateVotes.length >= 2 &&
-            (duplicateVotes.some((vote) => !vote.duplicate_of?.trim()) ||
-              new Set(duplicateVotes.map((vote) => vote.duplicate_of?.trim() || null)).size > 1)
-          ) conflicts++;
-        }
-        if (distinctStatuses.size === 1) {
-          const onlyStatus = statuses[0].corpus_status;
-          if (onlyStatus === "keep") unanimousKeep++;
-          else if (onlyStatus === "excluded") unanimousExclude++;
+        if (statuses.length === 3) {
+          const distinctStatuses = new Set(statuses.map((vote) => vote.corpus_status));
+          if (distinctStatuses.size === 3) {
+            conflicts++;
+          } else {
+            const duplicateVotes = statuses.filter((vote) => vote.corpus_status === "duplicate");
+            if (
+              duplicateVotes.length >= 2 &&
+              (duplicateVotes.some((vote) => !vote.duplicate_of?.trim()) ||
+                new Set(duplicateVotes.map((vote) => vote.duplicate_of?.trim() || null)).size > 1)
+            ) conflicts++;
+          }
+          if (distinctStatuses.size === 1) {
+            const onlyStatus = statuses[0].corpus_status;
+            if (onlyStatus === "keep") unanimousKeep++;
+            else if (onlyStatus === "excluded") unanimousExclude++;
+          }
         }
       }
+    }
+
+    // 5. Query pending unfinalized majority and unanimous consensus counts for instant action CTAs
+    let majorityKeepCount = 0;
+    let majorityExcludeCount = 0;
+    let pendingUnanimousKeep = 0;
+    let pendingUnanimousExclude = 0;
+
+    try {
+      const { results: pendingConsensusRows } = await env.DB.prepare(`
+        SELECT 
+          c.meme_id,
+          SUM(CASE WHEN c.corpus_status = 'keep' THEN 1 ELSE 0 END) as keep_count,
+          SUM(CASE WHEN c.corpus_status = 'excluded' THEN 1 ELSE 0 END) as exclude_count,
+          COUNT(*) as total_reviews
+        FROM meme_curation c
+        JOIN cat_users u ON u.id = c.user_id
+        WHERE c.meme_id NOT IN (SELECT meme_id FROM meme_curation_final)
+          AND u.username IN ('judge1', 'judge2', 'judge3')
+        GROUP BY c.meme_id
+        HAVING total_reviews >= 2
+      `).all<{ meme_id: string; keep_count: number; exclude_count: number; total_reviews: number }>();
+
+      for (const r of (pendingConsensusRows || [])) {
+        if (r.keep_count >= 2) {
+          majorityKeepCount++;
+          if (r.keep_count === r.total_reviews) pendingUnanimousKeep++;
+        } else if (r.exclude_count >= 2) {
+          majorityExcludeCount++;
+          if (r.exclude_count === r.total_reviews) pendingUnanimousExclude++;
+        }
       }
+    } catch {
+      // Graceful fallback
     }
 
     const unreviewed = Math.max(0, totalMemes - reviewedMemeCount);
 
     return json({
       total_memes: totalMemes,
-      resolved_count: resolvedActiveCount, // Canonical Authoritative Active count (111) — matches /admin Active!
+      resolved_count: resolvedActiveCount, // Canonical Authoritative Active count
       resolved_active_count: resolvedActiveCount,
       resolved_excluded_count: resolvedExcludedCount,
       total_resolved_count: totalResolvedCount,
@@ -195,6 +234,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         single_review: singleReview,
         unanimous_keep: unanimousKeep,
         unanimous_exclude: unanimousExclude,
+        majority_keep: majorityKeepCount,
+        majority_exclude: majorityExcludeCount,
+        pending_majority_keep: majorityKeepCount,
+        pending_majority_exclude: majorityExcludeCount,
+        pending_unanimous_keep: pendingUnanimousKeep,
+        pending_unanimous_exclude: pendingUnanimousExclude,
         conflicts,
         total_with_reviews: reviewedMemeCount
       },

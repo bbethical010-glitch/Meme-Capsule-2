@@ -5,7 +5,7 @@
 > **Classification:** Living Project Context & Reusable AI Operating Reference Across All Codebases  
 > **App / System Name:** Meme Capsule  
 > **Android Package Identifier:** `com.meme.capsule`  
-> **Mobile App Version:** `v3.6` (`versionCode 27`) — Built APKs in `builds/`  
+> **Mobile App Version:** `v3.7` (`versionCode 28`) — Built APKs in `builds/`  
 > **Official Web Platform:** [https://memecapsule.wtf](https://memecapsule.wtf) (Vite / React Multi-Page Static Prerendered)  
 > **Serverless Edge Backend:** [https://meme-capsule-eww.pages.dev](https://meme-capsule-eww.pages.dev) (Cloudflare Pages, D1 SQLite, R2 CDN)  
 > **Project Team & Engineering Leadership:**  
@@ -80,7 +80,7 @@
 
 ### Q1: What is Meme Capsule?
 **Meme Capsule** is an anti-algorithm, single-action meme delivery platform engineered for immediate entertainment without feeds, doomscrolling, or social clutter.
-- **Public Mobile Product:** A native Android application (`com.meme.capsule`, current version `v3.6` / `versionCode 27`) available on Google Play. Built with React 19, Vite 6, Tailwind CSS v4, and Capacitor 8, it operates like a digital arcade vending machine: tapping the **`HIT ME`** button dispenses exactly one hand-screened, high-variance meme onto a 4-card 3D perspective spring stack.
+- **Public Mobile Product:** A native Android application (`com.meme.capsule`, current version `v3.7` / `versionCode 28`) available on Google Play. Built with React 19, Vite 6, Tailwind CSS v4, and Capacitor 8, it operates like a digital arcade vending machine: tapping the **`HIT ME`** button dispenses exactly one hand-screened, high-variance meme onto a 4-card 3D perspective spring stack.
 - **Public Web Platform:** A multi-page, statically prerendered web platform at [https://memecapsule.wtf](https://memecapsule.wtf) featuring a live interactive drop preview simulator (with a 5-drop quota and Google Play install bumper), 3D interactive phone mockups with authentic WebP screenshots, Section 04.5 "Under the Hood" technical transparency, an official `/about` Press Kit, and Google AdSense monetization (`meme1`).
 - **Developer / Serverless Edge Backend:** A serverless edge architecture on Cloudflare Pages (`https://meme-capsule-eww.pages.dev`), Cloudflare D1 (SQLite database), and Cloudflare R2 (media bucket), coupled with Neo-Brutalist internal tools for human multi-judge curation (`/curate`), admin database syncing (`/admin`), user safety moderation (`/reports`), and AI-assisted pre-evaluation (`/ai-judge`).
 
@@ -704,7 +704,7 @@ All three codebases share a unified **Neo-Brutalist Cyber-Arcade** design langua
 
 | System / Codebase | Specific Module | Status | Verification Evidence & Location |
 |---|---|---|---|
-| **Mobile App (APK)** | Capacitor 8 Container & React 19 UI | `[IMPLEMENTED]` | `com.meme.capsule`, `v3.6` (`versionCode 27`) |
+| **Mobile App (APK)** | Capacitor 8 Container & React 19 UI | `[IMPLEMENTED]` | `com.meme.capsule`, `v3.7` (`versionCode 28`) |
 | **Mobile App (APK)** | 4-Card 3D Perspective Spring Deck | `[IMPLEMENTED]` | `MemeStack.tsx` (`@react-spring/web` & `@use-gesture/react`) |
 | **Mobile App (APK)** | 7-Meme FIFO Background Prefetch Buffer| `[IMPLEMENTED]` | `src/App.tsx` (`PIPELINE_TARGET_SIZE = 7`) |
 | **Mobile App (APK)** | Instant-Touch Overlay Buttons | `[IMPLEMENTED]` | `MemeCard.tsx` (`onPointerDown` with debounce guard) |
@@ -821,7 +821,7 @@ All three codebases share a unified **Neo-Brutalist Cyber-Arcade** design langua
 === PORTABLE CONTEXT: MEME CAPSULE (ALL THREE CODEBASES) ===
 APP NAME: Meme Capsule
 PACKAGE ID: com.meme.capsule
-CURRENT ANDROID VERSION: v3.6 (versionCode 27)
+CURRENT ANDROID VERSION: v3.7 (versionCode 28)
 OFFICIAL WEBSITES: https://memecapsule.wtf (Web Platform) | https://meme-capsule-eww.pages.dev (Edge Backend)
 DEVELOPERS & LEADERSHIP:
 - Anmol Verma (GitHub: editorav010-dev)
@@ -837,7 +837,7 @@ Social Media:
   Threads: https://www.threads.com/@capsule.meme
 
 ECOSYSTEM STRUCTURE:
-1. PUBLIC MOBILE APP (com.meme.capsule - v3.6 / versionCode 27):
+1. PUBLIC MOBILE APP (com.meme.capsule - v3.7 / versionCode 28):
    - Tech: React 19, TypeScript, Vite 6, Tailwind CSS v4, Capacitor 8 Android container.
    - Core UX: 4-card 3D perspective spring deck (@react-spring/web, @use-gesture/react), 12-meme rolling FIFO prefetch buffer (STACK_BATCH_SIZE = 10, PIPELINE_TARGET_SIZE = 12) with 60%-70% stack consumption prefetch trigger (STACK_PREFETCH_CONSUMPTION_RATIO = 0.6 / FIFO_REFILL_TRIGGER_SIZE = 4) and streaming per-meme enqueueing (enqueueMemeToFifo + advanceInlineWithoutLoadingScreen so viewing flow never breaks with a full-screen loading screen), zero floating action buttons over the Meme Box, and horizontal 4-column CTA row (nav#ctaRow, max-w-[356px] w-full mt-3.5) directly below the Meme Box: LIKE (#FF2A85) -> VAULT (#A855F7) -> PIN (#FACC15) -> MORE (⋮) (#00E5FF) with translate(3px, 3px) active press, ink-spread ripple (@keyframes inkSpread), 6-tick radial shockwave bursts (@keyframes burstSparks), and pop icon animations (@keyframes neoBurst). Tapping MORE opens #moreMenu (w-48 bg-white border-4 border-black) containing SHARE (#A855F7), DOWNLOAD (#FACC15), and REPORT (#FF2A85).
    - Google Play Rating Feature (RatingModal.tsx - v3.6): Interval-based rating prompt (first triggers at >= 8 memes viewed, then every 15 memes). Features a Neo-Brutalist 5-star interactive rating deck with dynamic reaction labels ("GOD-TIER DANKNESS!", "CERTIFIED BANGERS!", etc.). Redirects to Google Play Store via native bridge `openPlayStoreListing()` (`market://details?id=com.meme.capsule` with fallback to `https://play.google.com/store/apps/details?id=com.meme.capsule`) and sets `meme_capsule_rating_completed = 'true'` so it permanently never pops up again once feedback is registered. Provides a 24-hour deferral option (`REMIND ME IN 24 HOURS`) setting `meme_capsule_rating_deferred_until`. Also includes a manual trigger button in App Settings under "MEMBERSHIP & APP GUIDE".
