@@ -1,5 +1,70 @@
 # AI-Judgement Review Workflow Walkthrough
 
+## Android Analytics Phase 1 Contract Freeze
+
+- Added migration `016_android_analytics_schema_version.sql` with a non-null
+  `schema_version` column defaulting to `1` on `android_analytics_events`.
+- Updated `POST /api/analytics/events` to require `schema_version: 1` on every
+  Android event before validation and idempotent insertion.
+- Synchronized the API specification, Android collection standard, database
+  reference, project state, and production rollout plan.
+- Applied the migration to the remote `meme-capsule-db` database and verified
+  the live column with `PRAGMA table_info(android_analytics_events)`.
+- Verification: `npm run build`, `node --test tests/curationConsensus.test.mjs`,
+  and the live D1 schema check passed. `git diff --check` reports only
+  pre-existing trailing whitespace in the fetched canonical knowledge file.
+
+## Android Analytics Ingestion Hardening
+
+- The ingestion boundary now requires `application/json`, rejects bodies over
+  2 MiB, bounds optional metadata and properties, and rejects nested property
+  keys associated with PII or secrets.
+- Added fixed-window per-IP and per-token throttling through `ANALYTICS_KV`,
+  with `429` and `Retry-After` responses.
+- Added expiring aggregate counters for accepted, duplicate-containing,
+  unauthorized, rejected, and rate-limited requests without storing tokens,
+  IP addresses, hashes, or raw payloads.
+
+## Phase 2 Retention and Worker Protection
+
+- The scheduled analytics worker now purges expired Android raw events in
+  bounded batches, defaulting to 90 days and honoring
+  `ANALYTICS_RAW_RETENTION_DAYS` from 1 through 365 days.
+- The worker's manual `POST` trigger now requires `ANALYTICS_WORKER_TOKEN`;
+  scheduled invocations remain internal.
+- Corrected the existing rank-assignment mutation to satisfy strict worker
+  type-checking without changing its behavior.
+
+## Phase 4 Analytics Data Lifecycle
+
+- Added migration `018_android_analytics_deletion_audit.sql` for immutable
+  deletion-request auditing.
+- Added superadmin-only `POST /api/analytics/deletion` to delete events for a
+  verified anonymous SHA-256 user hash using a unique request reference.
+- Added superadmin-only `GET /api/analytics/deletion` for audit review.
+- Applied and verified the migration against the remote D1 database.
+
+## Phase 6 Analytics Performance Controls
+
+- Added migration `020_android_analytics_daily_summary.sql` for bounded,
+  worker-maintained daily Android aggregates.
+- Updated the analytics worker to refresh the last 90 days of summary rows
+  after retention cleanup and report the refreshed row count.
+- Added one-minute KV caching to Android overview, trends, audience, content,
+  funnel, retention, and deterministic insight responses.
+- Worker aggregation invalidates the Android cache namespace after completion.
+- Validation: `npm run build`, `npx tsc --noEmit`, Worker dry-run bundling, and
+  targeted `git diff --check` passed.
+
+## Phase 7 Verification and Staged Release
+
+- Added Vitest coverage for valid ingestion, consent lineage, invalid consent,
+  invalid token/content type, nested PII rejection, schema rejection, and
+  duplicate event accounting.
+- Added `npm run test:analytics` as the repeatable contract test command.
+- Added `docs/ANALYTICS_STAGING_VERIFICATION.md` with migration, synthetic
+  batch, dashboard, Worker, negative-path, and release-decision checks.
+
 This document outlines the AI-Judgement Review Workflow and the three-human majority-consensus curation flow for `/curate`.
 
 ## Overview
@@ -130,4 +195,3 @@ For non-meme uploads (e.g., random photos, corrupt images, spam):
 - Unified D1 migration `013_add_nsfw_flag.sql` and schema `d1/schema.sql` to support both `is_nsfw CHECK (is_nsfw IN (0, 1))` and metadata `nsfw_flagged_by`.
 - Unified `src/curate/curateApi.ts` and `src/curate/CurateApp.tsx` to handle NSFW toggling through `POST /api/curate/save` (`moderation_only`) to ensure Cloudflare Pages function publication safety while preserving UI responsiveness and state updates.
 - Added permanent operating guidelines to `docs/AGENT_RULES.md` and `docs/AGENTS.md` enforcing remote branch synchronization (`git fetch origin`, inspect `origin/main`) before any feature planning to eliminate duplicate feature implementations and branch drift.
-

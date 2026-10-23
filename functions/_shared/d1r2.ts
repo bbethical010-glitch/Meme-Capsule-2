@@ -7,6 +7,7 @@ export type Env = {
   ADMIN_API_TOKEN?: string;
   R2_PUBLIC_URL?: string;
   ANALYTICS_KV?: KVNamespace;
+  ANALYTICS_APP_TOKEN?: string;
 };
 
 export interface CatUser {

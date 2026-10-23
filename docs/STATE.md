@@ -41,6 +41,12 @@ The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been perma
   - `POST /api/report`: User safety reporting endpoint.
   - `POST /api/contact`: Public and advertiser inquiry endpoint with Cloudflare Pages Functions.
   - `POST /api/events`: Batched client telemetry event ingestion.
+  - `POST /api/analytics/events`: Authenticated, consented Android event ingestion with event-id deduplication.
+  - `GET /api/analytics/overview`, `GET /api/analytics/trends`: Curator-session-protected live Android KPI reads.
+  - `GET /api/analytics/retention`, `/funnel`, `/content`, `/audience`, `/ai-insights`: Aggregate dashboard analytics for the remaining live tabs.
+  - Analytics dashboard surfaces use live API responses only; loading, empty, and unsupported-metric states are explicit and never replaced with mock values.
+  - Phase 6 performance controls: migration 020 adds bounded daily Android summaries; the analytics worker refreshes them and invalidates one-minute KV caches for aggregate dashboard reads.
+  - Phase 7 verification: `npm run test:analytics` covers ingestion contract and privacy rejection paths; staging execution is documented in `docs/ANALYTICS_STAGING_VERIFICATION.md`.
 - **Admin Collection & Database APIs (`functions/api/admin/`)**:
   - `/api/admin/memes`: Prepared-statement D1 CRUD for meme metadata.
   - `/api/admin/upload`: Multi-part media upload streaming directly to Cloudflare R2 bucket.
@@ -63,7 +69,7 @@ The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been perma
   - `/api/ai-judge/classify`, `/api/ai-judge/run/start`, `/api/ai-judge/run/stop`, `/api/ai-judge/run/progress`: Autonomous multimodal evaluation loop.
 
 ### B. Cloudflare D1 Database & Migrations (`d1/migrations/`)
-The database `meme-capsule-db` (SQLite at the edge) operates under 14 sequential migrations:
+The database `meme-capsule-db` (SQLite at the edge) operates under additive migrations through 018:
 1. `000_complete_setup.sql`: Core schema initialization.
 2. `002_analytics.sql`: Event tracking, interactions, and ranking tables.
 3. `003_categorisation.sql`: Multi-judge accounts and editorial taxonomy.
@@ -78,6 +84,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under 14 sequential
 12. `011_force_removals.sql`: Audit table `meme_force_removals` and indexes for irreversible media purges.
 13. `011_reconcile_active_and_curation_sync.sql`: Synchronization of active counts between Admin and Curation portals.
 14. `012_add_curation_status_to_memes.sql`: 3-tier partitioning architecture introducing `curation_status` (`active`, `excluded`, `backlog`).
+15. `013_add_nsfw_flag.sql`, `014_add_resolved_curation_fields.sql`, `015_android_analytics_events.sql`, `016_android_analytics_schema_version.sql`, `017_android_analytics_query_indexes.sql`, and `018_android_analytics_deletion_audit.sql`: NSFW metadata, resolved curation fields, isolated consented Android telemetry, versioned analytics payloads, KPI indexes, and deletion auditing.
 
 ### C. Cloudflare R2 Media Storage
 - Bucket `memes` configured with public access enabled.
@@ -98,6 +105,17 @@ The database `meme-capsule-db` (SQLite at the edge) operates under 14 sequential
     - **Role-Based AI Console Gating**: Continuous AI Judge Console is hidden from human judges (1–3) on all viewports, visible to judge4/5 operators on desktop only.
     - **Quick Action Bar & Gesture Footer**: Complete touch alternatives for non-gesture accessibility; override button labeled "CUSTOM ATTRIBUTES".
 - **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, manual `[🔄 REFRESH (Ctrl+R)]` control, and dark mode.
+- **Analytics route**: The Super Admin CTA opens `#/curate/analytics`, where the KPI cards and engagement trend read live consented Android analytics through curator-session-protected APIs. Secondary design panels remain preview-only until their backend contracts are implemented.
+- **Live Android analytics path**: Migration 015 adds `android_analytics_events`; `POST /api/analytics/events` accepts authenticated, consented Android batches, and curator-session-protected `/api/analytics/overview` plus `/api/analytics/trends` provide low-latency KPI reads. The analytics route refreshes these values every 30 seconds. Configure `ANALYTICS_APP_TOKEN` before enabling ingestion.
+- **Phase 1 contract freeze**: Migration 016 adds required `schema_version = 1` validation to Android event ingestion. The Android client must include this field on every event before production telemetry is enabled.
+- **Analytics ingestion hardening**: The Android ingestion endpoint now enforces JSON content type, a 2 MiB body limit, bounded optional fields/properties, nested PII/secret-key rejection, fixed-window per-IP/per-token rate limits through `ANALYTICS_KV`, `Retry-After` responses, and aggregate operational counters that exclude payloads, hashes, IPs, and tokens.
+- **Raw-event retention**: The scheduled analytics worker purges up to 10,000 expired Android events per run. Retention defaults to 90 days and can be configured with `ANALYTICS_RAW_RETENTION_DAYS` (clamped to 1–365 days).
+- **Worker trigger protection**: Manual analytics-worker `POST` execution now requires the separate `ANALYTICS_WORKER_TOKEN`; scheduled execution remains internal.
+- **Phase 3 query performance**: Migration 017 adds composite indexes for time-bounded Android KPI queries. Overview and trends responses now include explicit freshness and empty-state metadata.
+- **Phase 4 deletion lifecycle**: Migration 018 adds `android_analytics_deletion_audit`; superadmins can process verified anonymous-hash deletion requests through `POST /api/analytics/deletion`, with audit listing through the protected `GET` route.
+- **Phase 4 consent lineage**: Migration 019 stores `consent_version` with each Android event, defaulting legacy clients to `v1`. Consent denial/revocation remains local and must not emit behavioral telemetry.
+- **Production rollout plan**: The remaining work is tracked phase-by-phase in [ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md](./ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md), covering Android instrumentation, delivery reliability, ingestion hardening, lifecycle controls, dashboard completion, scale testing, and staged release gates.
+- **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, dark mode, and manual refresh controls.
 - **`/categorise`**: Multi-topic taxonomy tagging, tone labeling, and humor mechanism tagging.
 - **`/ai-judge`**: Multimodal AI pre-curator loop powered by NVIDIA NIM Llama 3.2 Vision and universal vision models.
 - **`/reports`**: Token-gated content safety moderation desk.
@@ -161,6 +179,7 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
    - Heavy table scans are now completely bypassed when `include_stats=false`.
 2. **Client-Side Optimistic Progress Incrementation**:
    - [`src/curate/CurateApp.tsx`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/CurateApp.tsx) and [`src/curate/curateApi.ts`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/curateApi.ts) updated to fetch next memes with `include_stats=false` during continuous swiping.
+<<<<<<< HEAD
 
 ---
 
@@ -189,3 +208,7 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
    - Upgraded `.curate-mobile-quick-actions` to a 2-column grid (`grid-template-columns: repeat(2, 1fr)`) with enlarged 54px touch targets for `[✏️ MANUAL OVERRIDE]` and `[🗑️ FORCE REMOVE]`.
 
 
+=======
+   - The UI optimistically advances the judge's reviewed counter (`reviewed + 1`, `remaining - 1`), eliminating wait times and dropping per-swipe D1 reads from **~10,000 to ~2 rows (99.97% drop)**.
+   - Increases daily curation capacity from **166 memes/day to over 25,000 memes/day** under Cloudflare's Free tier with 0 cost.
+>>>>>>> f06b107 (feat: complete Android analytics rollout phases)

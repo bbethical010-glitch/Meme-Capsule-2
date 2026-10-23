@@ -243,7 +243,7 @@ export const assignRanks = (memes: (ComputedMetrics & { meme_id: string })[]): R
     const idToRank = new Map<string, number>();
     sorted.forEach((m, i) => idToRank.set(m.meme_id, i + 1));
     for (const m of arr) {
-      (m as Record<string, unknown>)[rankKey] = idToRank.get(m.meme_id) ?? arr.length;
+      Object.assign(m, { [rankKey]: idToRank.get(m.meme_id) ?? arr.length });
     }
   };
 

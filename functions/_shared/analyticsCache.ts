@@ -20,6 +20,7 @@ export const INSIGHTS_TTL = 1800; // 30 minutes
 
 /** Cache for /api/admin/analytics/trends */
 export const TRENDS_TTL = 900; // 15 minutes
+export const ANDROID_ANALYTICS_TTL = 60; // 1 minute
 
 // No TTL for /api/admin/analytics/meme/:memeId — always fresh
 
@@ -46,6 +47,9 @@ export const insightsCacheKey = (): string =>
 
 export const trendsCacheKey = (days: number): string =>
   `${CACHE_PREFIX}trends:${days}`;
+
+export const androidAnalyticsCacheKey = (name: string, params = ""): string =>
+  `${CACHE_PREFIX}android:${name}${params ? `:${params}` : ""}`;
 
 // ────────────────────────────────────────────────────────────
 // Cache Operations
@@ -108,6 +112,13 @@ export const bustAnalyticsCache = async (kv: KVNamespace): Promise<void> => {
     }
   } catch {
     // Listing may fail on free tier — that's ok
+  }
+
+  try {
+    const listed = await kv.list({ prefix: `${CACHE_PREFIX}android:` });
+    for (const key of listed.keys) knownKeys.push(key.name);
+  } catch {
+    // Listing may fail on free tier; expiration still bounds stale data.
   }
 
   await Promise.allSettled(

@@ -11,6 +11,30 @@ The analytics system is built natively on Cloudflare using three core components
 3.  **Aggregation Worker (`workers/analyticsAggregator.ts`)**: A standalone Cloudflare Worker triggered via Cron (`*/30 * * * *`). It reads the raw `meme_events` table, calculates heavy metrics (engagement, virality, retention, percentiles) using pure functions (`analyticsFormulas.ts`), and writes the consolidated state to the `meme_analytics` table for fast O(1) reads.
 4.  **Dashboard UI (`src/admin/analytics-dashboard/`)**: A standalone React dashboard integrated into the Admin panel, protected by `AdminGate` (PIN based). Pure SVG charts, actionable insights, and full metric breakdowns.
 
+The Android KPI path is now available separately from the legacy web interaction
+path: `POST /api/analytics/events` validates consented Android batches and writes
+to `android_analytics_events` (migrations 015-016), while the curator-session-protected
+`GET /api/analytics/overview` and `GET /api/analytics/trends` endpoints aggregate
+the raw Android table directly for a 30-second live dashboard refresh. Configure
+`ANALYTICS_APP_TOKEN` before enabling Android ingestion.
+Retention, funnel, content, audience, and deterministic insight endpoints are
+also available under `/api/analytics/*` and are consumed by the corresponding
+dashboard tabs. These readers use aggregate SQL only and never return hashes or
+raw properties.
+
+The scheduled analytics worker also removes expired rows from
+`android_analytics_events` in bounded batches. Set
+`ANALYTICS_RAW_RETENTION_DAYS` in the worker environment when a value other than
+the 90-day default is required. Manual `POST` execution requires the separate
+`ANALYTICS_WORKER_TOKEN` via `Authorization: Bearer ...` or
+`X-Analytics-Worker-Token`; scheduled execution does not require this header.
+Overview and trend responses include freshness metadata and explicit empty-state
+flags for environments that have not received Android events yet.
+Phase 6 adds a worker-maintained 90-day daily Android summary table and
+one-minute KV caching for Android aggregate readers. Phase 7 verification is
+available with `npm run test:analytics`; staging checks are documented in
+`docs/ANALYTICS_STAGING_VERIFICATION.md`.
+
 ## Local Development & Testing
 
 You will need two separate Wrangler processes to fully test the pipeline locally, because the aggregator is a separate Worker, while the API is a Pages Function.

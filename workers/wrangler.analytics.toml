@@ -1,0 +1,18 @@
+name = "meme-capsule-analytics"
+main = "analyticsAggregator.ts"
+compatibility_date = "2024-12-18"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "meme-capsule-db"
+database_id = "64e2bb16-1557-4d53-8e6b-5197c8636d09"
+
+[[kv_namespaces]]
+binding = "ANALYTICS_KV"
+id = "078fce53803845b3a47751baef405341"
+
+[vars]
+ANALYTICS_RAW_RETENTION_DAYS = "90"
+
+[triggers]
+crons = ["*/30 * * * *"]

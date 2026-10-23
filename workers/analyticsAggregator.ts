@@ -14,7 +14,7 @@
  *   - Seeds initial values from legacy columns on first run
  *   - Busts KV cache on completion
  *
- * Cron: "*/30 * * * *" configured in wrangler.toml
+ * Cron: every 30 minutes, configured in the worker's wrangler configuration
  */
 
 import {
@@ -32,7 +32,79 @@ import { bustAnalyticsCache } from "../functions/_shared/analyticsCache";
 interface Env {
   DB: D1Database;
   ANALYTICS_KV: KVNamespace;
+  ANALYTICS_RAW_RETENTION_DAYS?: string;
+  ANALYTICS_WORKER_TOKEN?: string;
 }
+
+const DEFAULT_ANDROID_ANALYTICS_RETENTION_DAYS = 90;
+const MAX_ANDROID_ANALYTICS_RETENTION_DAYS = 365;
+const RETENTION_DELETE_BATCH_SIZE = 10_000;
+const ANDROID_SUMMARY_DAYS = 90;
+
+const getRetentionDays = (env: Env): number => {
+  const configured = Number.parseInt(env.ANALYTICS_RAW_RETENTION_DAYS || "", 10);
+  if (!Number.isFinite(configured)) return DEFAULT_ANDROID_ANALYTICS_RETENTION_DAYS;
+  return Math.min(Math.max(configured, 1), MAX_ANDROID_ANALYTICS_RETENTION_DAYS);
+};
+
+const purgeExpiredAndroidEvents = async (env: Env): Promise<number> => {
+  const retentionDays = getRetentionDays(env);
+  const result = await env.DB.prepare(`
+    DELETE FROM android_analytics_events
+    WHERE id IN (
+      SELECT id
+      FROM android_analytics_events
+      WHERE timestamp_utc < datetime('now', ?)
+      ORDER BY id ASC
+      LIMIT ?
+    )
+  `).bind(`-${retentionDays} days`, RETENTION_DELETE_BATCH_SIZE).run();
+
+  return result.meta?.changes || 0;
+};
+
+const refreshAndroidDailySummary = async (env: Env): Promise<number> => {
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    DELETE FROM android_analytics_daily_summary
+    WHERE summary_date >= date('now', ?)
+  `).bind(`-${ANDROID_SUMMARY_DAYS} days`).run();
+
+  const { results } = await env.DB.prepare(`
+    SELECT
+      substr(timestamp_utc, 1, 10) AS summary_date,
+      platform,
+      event_name,
+      COALESCE(category, '') AS category,
+      COALESCE(app_version, '') AS app_version,
+      COUNT(*) AS events,
+      COUNT(DISTINCT user_hash) AS users,
+      COUNT(DISTINCT session_id) AS sessions,
+      SUM(CASE WHEN event_name = 'meme_view' THEN 1 ELSE 0 END) AS views,
+      SUM(CASE WHEN event_name = 'meme_like' THEN 1 ELSE 0 END) AS likes,
+      SUM(CASE WHEN event_name = 'meme_share' THEN 1 ELSE 0 END) AS shares,
+      SUM(CASE WHEN event_name = 'meme_save' THEN 1 ELSE 0 END) AS saves
+    FROM android_analytics_events
+    WHERE timestamp_utc >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
+    GROUP BY summary_date, platform, event_name, category, app_version
+  `).bind(`-${ANDROID_SUMMARY_DAYS} days`).all<Record<string, string | number>>();
+
+  if (!results?.length) return 0;
+  const statements = results.map((row) => env.DB.prepare(`
+    INSERT OR REPLACE INTO android_analytics_daily_summary (
+      summary_date, platform, event_name, category, app_version,
+      events, users, sessions, views, likes, shares, saves, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    row.summary_date, row.platform, row.event_name, row.category, row.app_version,
+    row.events, row.users, row.sessions, row.views, row.likes, row.shares, row.saves, now
+  ));
+
+  for (let index = 0; index < statements.length; index += BATCH_WRITE_SIZE) {
+    await env.DB.batch(statements.slice(index, index + BATCH_WRITE_SIZE));
+  }
+  return results.length;
+};
 
 interface AggRow {
   meme_id: string;
@@ -112,7 +184,7 @@ GROUP BY meme_id, date
 // Core aggregation logic
 // ────────────────────────────────────────────────────────────
 
-const runAggregation = async (env: Env): Promise<{ processed: number; seeded: number }> => {
+const runAggregation = async (env: Env): Promise<{ processed: number; seeded: number; androidSummaryRows: number }> => {
   const startTime = Date.now();
 
   // 1. Fetch raw aggregations from meme_events
@@ -120,7 +192,9 @@ const runAggregation = async (env: Env): Promise<{ processed: number; seeded: nu
 
   if (!rawRows || rawRows.length === 0) {
     // No events yet — seed from legacy columns if any memes exist
-    return { processed: 0, seeded: await seedFromLegacy(env) };
+    const androidSummaryRows = await refreshAndroidDailySummary(env);
+    if (env.ANALYTICS_KV) await bustAnalyticsCache(env.ANALYTICS_KV);
+    return { processed: 0, seeded: await seedFromLegacy(env), androidSummaryRows };
   }
 
   // 2. Convert to RawMemeAggregation and compute metrics
@@ -197,7 +271,7 @@ const runAggregation = async (env: Env): Promise<{ processed: number; seeded: nu
     await bustAnalyticsCache(env.ANALYTICS_KV);
   }
 
-  return { processed, seeded: 0 };
+  return { processed, seeded: 0, androidSummaryRows: await refreshAndroidDailySummary(env) };
 };
 
 // ────────────────────────────────────────────────────────────
@@ -336,10 +410,11 @@ export default {
     const start = Date.now();
 
     try {
+      const purged = await purgeExpiredAndroidEvents(env);
       const result = await runAggregation(env);
       const duration = Date.now() - start;
       console.log(
-        `Analytics aggregation complete: ${result.processed} memes processed, ${result.seeded} seeded from legacy. Duration: ${duration}ms`
+        `Analytics aggregation complete: ${result.processed} memes processed, ${result.seeded} seeded from legacy, ${result.androidSummaryRows} Android summary rows refreshed, ${purged} Android events purged. Duration: ${duration}ms`
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -352,13 +427,25 @@ export default {
     if (request.method !== "POST") {
       return new Response("Method not allowed", { status: 405 });
     }
+    const configuredToken = env.ANALYTICS_WORKER_TOKEN;
+    const authorization = request.headers.get("Authorization") || "";
+    const bearerToken = authorization.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length).trim()
+      : "";
+    const headerToken = request.headers.get("X-Analytics-Worker-Token") || "";
+    if (!configuredToken || (bearerToken !== configuredToken && headerToken !== configuredToken)) {
+      return new Response("Unauthorized", { status: 401 });
+    }
 
     try {
+      const purged = await purgeExpiredAndroidEvents(env);
       const result = await runAggregation(env);
       return new Response(JSON.stringify({
         success: true,
         processed: result.processed,
         seeded: result.seeded,
+        android_summary_rows: result.androidSummaryRows,
+        android_events_purged: purged,
         timestamp: new Date().toISOString()
       }), {
         headers: { "Content-Type": "application/json" }

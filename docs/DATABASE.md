@@ -2,7 +2,7 @@
 
 ## Current Storage
 
-The project uses Cloudflare R2 + D1 as its production edge database and storage layer. The repository now includes migration `014_add_resolved_curation_fields.sql`; apply it to each D1 environment before deploying code that uses the new curation columns.
+The project uses Cloudflare R2 + D1 as its production edge database and storage layer. The repository now includes additive migrations through `018`, including Android analytics schema versioning, query indexes, and deletion auditing; apply them to each D1 environment before deploying code that uses those features.
 
 Current storage layers:
 
@@ -111,6 +111,43 @@ Created in Migration 011 (`011_force_removals.sql`) to provide an immutable audi
 - `r2_error`: Error message text if R2 deletion encountered an exception.
 - `removed_at`: ISO timestamp when removal was executed.
 - `r2_deleted_at`: ISO timestamp when R2 deletion was confirmed.
+
+### Android Analytics Table: `android_analytics_events`
+Migration 015 stores consented, anonymized Android telemetry separately from
+the legacy `meme_events` contract:
+- unique `event_id` for retry-safe ingestion
+- required `schema_version` for payload contract compatibility
+- hashed `user_hash`, session, event name, UTC timestamp, app/OS version
+- optional country, meme, category, source, screen, and bounded properties JSON
+- `consent_status` constrained to `granted`
+
+Dashboard reads aggregate this table and never expose raw event payloads or
+user hashes.
+
+Ingestion rate-limit and operational counters are stored separately in the
+`ANALYTICS_KV` namespace with expiring keys. These counters do not contain raw
+events, user hashes, client IP addresses, or app tokens.
+
+The scheduled analytics worker deletes expired raw Android events in bounded
+batches. The default retention is 90 days; `ANALYTICS_RAW_RETENTION_DAYS` may
+configure a value from 1 through 365 days.
+
+Migration 017 adds composite indexes on Android event time with platform,
+event name, category, and session to keep Phase 3 dashboard queries
+time-bounded as the raw table grows.
+
+Migration 018 adds `android_analytics_deletion_audit`, which records the
+request reference, anonymous user hash, deleted event count, superadmin
+operator, status, and completion timestamps for verified deletion requests.
+
+Migration 019 adds `consent_version` to `android_analytics_events`, defaulting
+legacy rows to `v1`, so dashboard data can be traced to the consent-policy
+version active when each event was created.
+
+Migration 020 adds `android_analytics_daily_summary`, a bounded 90-day
+worker-maintained aggregate keyed by date, platform, event, category, and app
+version. It contains only counts and distinct-user/session aggregates; raw
+events remain the source of truth for deletion and retention operations.
 
 ## API Flow
 
