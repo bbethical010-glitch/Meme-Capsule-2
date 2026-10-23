@@ -1203,6 +1203,15 @@ meme application/
 │           │   ├── step-4-deliver.md
 │           │   └── tones.md
 │           └── SKILL.md
+├── .knowledge
+│   ├── .knowledge_meta.json
+│   ├── fetch-knowledge.ps1
+│   ├── fetch-knowledge.sh
+│   ├── update-knowledge.ps1
+│   └── update-knowledge.sh
+├── .nexus
+├── .vscode
+│   └── launch.json
 ├── .windsurf
 │   └── skills
 │       └── brag
@@ -1526,7 +1535,6 @@ meme application/
 │   │   │   ├── frame-03-at-15.038s.png
 │   │   │   └── frame-04-at-19.449s.png
 │   │   └── index.html                                # HTML entry point
-│   ├── .DS_Store
 │   ├── brag-plan.md
 │   ├── brag.mp4
 │   └── composition-brief.md
@@ -1545,24 +1553,30 @@ meme application/
 │   │   ├── 010_enforce_superadmin_active_and_cleanup_judges.sql
 │   │   ├── 011_force_removals.sql
 │   │   ├── 011_reconcile_active_and_curation_sync.sql
-│   │   └── 012_add_curation_status_to_memes.sql
-│   ├── .DS_Store
+│   │   ├── 012_add_curation_status_to_memes.sql
+│   │   ├── 013_add_nsfw_flag.sql                     # D1 migration 013: is_nsfw & nsfw_flagged_by columns
+│   │   └── 014_add_resolved_curation_fields.sql
 │   ├── schema.sql                                    # SQLite schema for meme metadata
 │   └── seed.sql
 ├── docs                                              # Dedicated project documentation folder
 │   ├── planning                                      # Project planning and roadmap (in docs/)
 │   │   ├── AI-SPEC.md
+│   │   ├── Multi-Judge Majority Consensus — curate Implementation Prompt.md
 │   │   └── ROADMAP.md                                # Phase-by-phase development plan
+│   ├── superpowers
+│   │   └── plans
 │   ├── AGENT_RULES.md
 │   ├── AGENTS.md
 │   ├── AI_PREJUDGE_CURATE_ANALYSIS.md
 │   ├── CHANGELOG.md                                  # Version history
 │   ├── CLAUDE.md                                     # Development setup & commands guide
 │   ├── CLOUDFLARE_D1_USAGE_AND_OPTIMIZATION_REPORT.md
+│   ├── CLOUDFLARE_FREE_TIER_CAPACITY_AUDIT.md
 │   ├── CLOUDFLARE_LIMITS_AND_SCALING_RESEARCH.md
 │   ├── DATABASE.md                                   # Database and storage architecture docs
 │   ├── FORCE_REMOVE_FEATURE.md
 │   ├── GEMINI.md
+│   ├── majority-consensus-curation-walkthrough.md
 │   ├── MEME_CAPSULE_KNOWLEDGE.md
 │   ├── PRIVACY_COOKIES_AND_DATA_FLOWS.md
 │   ├── PROJECT_STRUCTURE.md                          # This file
@@ -1580,8 +1594,10 @@ meme application/
 │   │   ├── catConsensus.ts
 │   │   ├── crypto.ts
 │   │   ├── curateDb.ts
+│   │   ├── curationConsensus.ts
 │   │   ├── d1r2.ts                                   # D1 + R2 helper (NEW — replaces supabase.ts)
 │   │   ├── fallbackMemes.ts                          # Static fallback memes for offline/empty DB
+│   │   ├── forceRemove.ts
 │   │   └── pages.ts                                  # Cloudflare Pages type definitions
 │   ├── api                                           # API route handlers
 │   │   ├── admin                                     # Admin dashboard
@@ -1643,13 +1659,16 @@ meme application/
 │   │   │   ├── account.ts
 │   │   │   ├── ai-presets.ts
 │   │   │   ├── ai-proxy.ts
-│   │   │   ├── approve.ts                            # POST /api/curate/approve (atomic adoption & finalization)
+│   │   │   ├── approve.ts
 │   │   │   ├── export.ts
-│   │   │   ├── force-remove.ts                       # POST /api/curate/force-remove (permanent R2 & D1 deletion)
+│   │   │   ├── force-remove.ts
 │   │   │   ├── list.ts
 │   │   │   ├── next.ts
+│   │   │   ├── nsfw.ts                               # PATCH /api/curate/nsfw — Curator NSFW flag toggle
 │   │   │   ├── save.ts
 │   │   │   └── stats.ts
+│   │   ├── memes
+│   │   │   └── random.ts
 │   │   ├── contact.ts
 │   │   ├── daily-meme.ts                             # GET /api/daily-meme — public
 │   │   ├── events.ts
@@ -1712,6 +1731,8 @@ meme application/
 │   │   ├── CatLogin.tsx
 │   │   ├── catTypes.ts
 │   │   └── useCatAuth.ts
+│   ├── components
+│   │   └── AutoRefreshControl.tsx
 │   ├── curate
 │   │   ├── ai-judge
 │   │   │   ├── aiJudgeClient.ts
@@ -1734,7 +1755,9 @@ meme application/
 │   │   ├── CurateLogin.tsx
 │   │   ├── curateTypes.ts
 │   │   ├── CurationStatsModal.tsx
-│   │   └── EditorialButtons.tsx
+│   │   ├── EditorialButtons.tsx
+│   │   ├── useCurateGestures.ts
+│   │   └── useIsMobile.ts
 │   ├── data                                          # Static data
 │   │   └── fallbackMemes.ts                          # Static fallback memes for offline/empty DB
 │   ├── lib                                           # Utility modules
@@ -1746,13 +1769,17 @@ meme application/
 │   ├── main.tsx                                      # React entry point and router
 │   ├── types.ts                                      # TypeScript type definitions (Meme, Rarity, etc.)
 │   └── vite-env.d.ts                                 # Vite environment type augmentation
+├── tests
+│   └── curationConsensus.test.mjs
 ├── workers
 │   └── analyticsAggregator.ts
+├── .dev.vars
 ├── .dev.vars.example                                 # Environment variable template
-├── .DS_Store
+├── .env
 ├── .gitignore                                        # Git ignore rules
+├── AGENT_RULES.md
+├── AGENTS.md
 ├── converted.pdf
-├── fetch-knowledge.ps1
 ├── FORCE_REMOVE_IMPLEMENTATION.md
 ├── FORCE_REMOVE_TODO.md
 ├── index.html                                        # HTML entry point
@@ -1762,7 +1789,6 @@ meme application/
 ├── stitch_admin.html
 ├── tsconfig.functions.json
 ├── tsconfig.json                                     # TypeScript configuration
-├── update-knowledge.ps1
 ├── vite.config.ts                                    # Vite build configuration
 └── wrangler.toml                                     # Cloudflare Workers/Pages config (NEW — Phase 2)
 ```
@@ -1793,6 +1819,8 @@ meme application/
 | `admin/upload.ts` | `POST /api/admin/upload` | Uploads image/video to R2 storage | R2 bucket |
 | `admin/sync-r2.ts` | `POST /api/admin/sync-r2` | Scans R2 and creates D1 records for untracked files | R2 bucket → D1 database |
 | `_shared/d1r2.ts` | (shared module) | D1 queries, R2 helpers, auth, fallback logic | D1, R2, fallback memes |
+| `memes/random.ts` | `GET /api/memes/random` | Returns one random active meme (accepts `?nsfw=1` or `true`) | D1 database → fallback memes |
+| `curate/nsfw.ts` | `PATCH/POST /api/curate/nsfw` | Curator NSFW flag toggle (`is_nsfw = 1/0`, `nsfw_flagged_by = 'curator'`) | D1 database |
 
 ### Data Flow
 

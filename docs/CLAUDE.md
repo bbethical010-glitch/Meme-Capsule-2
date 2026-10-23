@@ -33,7 +33,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 ### Tech Stack
 - **Frontend / Internal Workbenches**: React 19, TypeScript, Vite 6
 - **Serverless API**: Cloudflare Pages Functions (`functions/api/`, `functions/reports.ts`)
-- **Database**: Cloudflare D1 (SQLite) with 13 production migrations (`d1/migrations/`)
+- **Database**: Cloudflare D1 (SQLite) with 14 production migrations (`d1/migrations/`)
 - **Object Storage**: Cloudflare R2 bucket (`memes`)
 - **Styling**: Neo-Brutalist Vanilla CSS (`curate.css`, `admin.css`, `cat.css`, `aiJudge.css`)
 

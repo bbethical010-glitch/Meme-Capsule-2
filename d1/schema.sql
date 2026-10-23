@@ -6,7 +6,10 @@ CREATE TABLE IF NOT EXISTS memes (
   source_link TEXT,
   category TEXT NOT NULL DEFAULT 'Unsorted',
   tags TEXT NOT NULL DEFAULT '[]',
-  is_nsfw INTEGER NOT NULL DEFAULT 0 CHECK (is_nsfw IN (0, 1)),
+  duplicate_of TEXT,
+  topics TEXT NOT NULL DEFAULT '[]',
+  tone TEXT,
+  humour_mechanisms TEXT NOT NULL DEFAULT '[]',
   rarity TEXT NOT NULL DEFAULT 'Common' CHECK (rarity IN ('Common', 'Rare', 'Legendary')),
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('active', 'draft', 'archived')),
   media_type TEXT NOT NULL DEFAULT 'image' CHECK (media_type IN ('image', 'video')),
@@ -19,5 +22,9 @@ CREATE TABLE IF NOT EXISTS memes (
   rights_note TEXT NOT NULL DEFAULT 'reviewed',
   share_text TEXT NOT NULL DEFAULT 'Spawned from Meme Capsule',
   random_key REAL NOT NULL DEFAULT (abs(random()) / 9223372036854775807.0),
+  is_nsfw INTEGER NOT NULL DEFAULT 0 CHECK (is_nsfw IN (0, 1)),
+  nsfw_flagged_by TEXT,
   CHECK (image_url IS NOT NULL OR storage_path IS NOT NULL)
 );
+
+CREATE INDEX IF NOT EXISTS idx_memes_is_nsfw ON memes(is_nsfw);

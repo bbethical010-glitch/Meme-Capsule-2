@@ -39,6 +39,8 @@ export type D1MemeRow = {
   share_count: number;
   likes_count: number;
   random_key: number;
+  is_nsfw?: number;
+  nsfw_flagged_by?: string | null;
 };
 
 const jsonHeaders = {
@@ -116,16 +118,19 @@ export const normalizeRow = (env: Env, row: D1MemeRow): Meme => ({
   uploaded_at: row.uploaded_at || new Date().toISOString(),
   share_text: row.share_text || "Spawned from Meme Capsule",
   rights_note: row.rights_note || undefined,
-  likes_count: row.likes_count ?? 0
+  likes_count: row.likes_count ?? 0,
+  is_nsfw: row.is_nsfw ?? 0,
+  nsfw_flagged_by: row.nsfw_flagged_by ?? null
 });
 
-export const getRandomMeme = async (env: Env): Promise<Meme | null> => {
+export const getRandomMeme = async (env: Env, options?: { nsfw?: boolean }): Promise<Meme | null> => {
   const randomKey = Math.random();
+  const nsfwClause = options?.nsfw ? "" : "AND (m.is_nsfw IS NULL OR m.is_nsfw = 0)";
 
   const { results } = await env.DB.prepare(
     `SELECT m.* FROM memes m
      INNER JOIN meme_curation_final f ON m.id = f.meme_id
-     WHERE m.is_active = 1 AND m.is_nsfw = 0 AND m.status = 'active' AND f.corpus_status = 'keep' AND (m.category IS NULL OR LOWER(m.category) != 'archived') AND m.random_key >= ?
+     WHERE m.is_active = 1 AND m.status = 'active' AND f.corpus_status = 'keep' AND (m.category IS NULL OR LOWER(m.category) != 'archived') ${nsfwClause} AND m.random_key >= ?
      ORDER BY m.random_key ASC LIMIT 1`
   ).bind(randomKey).all<D1MemeRow>();
 
@@ -135,7 +140,7 @@ export const getRandomMeme = async (env: Env): Promise<Meme | null> => {
     const wrap = await env.DB.prepare(
       `SELECT m.* FROM memes m
        INNER JOIN meme_curation_final f ON m.id = f.meme_id
-       WHERE m.is_active = 1 AND m.is_nsfw = 0 AND m.status = 'active' AND f.corpus_status = 'keep' AND (m.category IS NULL OR LOWER(m.category) != 'archived')
+       WHERE m.is_active = 1 AND m.status = 'active' AND f.corpus_status = 'keep' AND (m.category IS NULL OR LOWER(m.category) != 'archived') ${nsfwClause}
        ORDER BY m.random_key ASC LIMIT 1`
     ).all<D1MemeRow>();
     row = wrap.results[0];
@@ -147,11 +152,12 @@ export const getRandomMeme = async (env: Env): Promise<Meme | null> => {
   return meme.url ? meme : null;
 };
 
-export const getDailyMeme = async (env: Env): Promise<Meme | null> => {
+export const getDailyMeme = async (env: Env, options?: { nsfw?: boolean }): Promise<Meme | null> => {
+  const nsfwClause = options?.nsfw ? "" : "AND (m.is_nsfw IS NULL OR m.is_nsfw = 0)";
   const { results } = await env.DB.prepare(
     `SELECT m.* FROM memes m
      INNER JOIN meme_curation_final f ON m.id = f.meme_id
-     WHERE m.is_active = 1 AND m.is_nsfw = 0 AND m.status = 'active' AND f.corpus_status = 'keep' AND (m.category IS NULL OR LOWER(m.category) != 'archived')
+     WHERE m.is_active = 1 AND m.status = 'active' AND f.corpus_status = 'keep' AND (m.category IS NULL OR LOWER(m.category) != 'archived') ${nsfwClause}
      ORDER BY m.uploaded_at DESC LIMIT 50`
   ).all<D1MemeRow>();
 
@@ -164,17 +170,17 @@ export const getDailyMeme = async (env: Env): Promise<Meme | null> => {
   return meme.url ? meme : null;
 };
 
-export const randomMemeOrFallback = async (env: Env) => {
+export const randomMemeOrFallback = async (env: Env, options?: { nsfw?: boolean }) => {
   try {
-    return (await getRandomMeme(env)) || randomFallbackMeme();
+    return (await getRandomMeme(env, options)) || randomFallbackMeme();
   } catch {
     return randomFallbackMeme();
   }
 };
 
-export const dailyMemeOrFallback = async (env: Env) => {
+export const dailyMemeOrFallback = async (env: Env, options?: { nsfw?: boolean }) => {
   try {
-    return (await getDailyMeme(env)) || dailyFallbackMeme();
+    return (await getDailyMeme(env, options)) || dailyFallbackMeme();
   } catch {
     return dailyFallbackMeme();
   }

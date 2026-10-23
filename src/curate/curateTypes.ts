@@ -66,7 +66,8 @@ export interface CurateMemeItem {
   title: string;
   image_url: string;
   storage_path: string;
-  is_nsfw?: boolean;
+  is_nsfw?: boolean | number;
+  nsfw_flagged_by?: "ai-judge" | "curator" | "report" | string | null;
   curation?: CuratedMemeData | null;
   ai_prediction?: {
     corpus_status: CorpusStatus | null;

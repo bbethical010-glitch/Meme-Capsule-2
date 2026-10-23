@@ -2,10 +2,30 @@ param(
   [string]$Owner     = "editorav010-dev",
   [string]$Repo      = "meme-capsule-sync",
   [string]$Branch    = "main",
-  [string]$LocalPath = "docs\MEME_CAPSULE_KNOWLEDGE.md",
-  [string]$MetaPath  = ".knowledge\.knowledge_meta.json",
+  [string]$LocalPath,
+  [string]$MetaPath,
   [string]$Message   = "Update MEME_CAPSULE_KNOWLEDGE.md via AI agent"
 )
+
+# Resolve paths dynamically relative to script directory and project root
+$ScriptDir = $PSScriptRoot
+$ProjectRoot = Split-Path -Parent $ScriptDir
+
+if (-not $MetaPath) {
+  $MetaPath = Join-Path $ScriptDir ".knowledge_meta.json"
+}
+
+if (-not $LocalPath) {
+  if (Test-Path (Join-Path $ProjectRoot "docs\MEME_CAPSULE_KNOWLEDGE.md")) {
+    $LocalPath = Join-Path $ProjectRoot "docs\MEME_CAPSULE_KNOWLEDGE.md"
+  } elseif (Test-Path (Join-Path $ScriptDir "MEME_CAPSULE_KNOWLEDGE.md")) {
+    $LocalPath = Join-Path $ScriptDir "MEME_CAPSULE_KNOWLEDGE.md"
+  } elseif (Test-Path (Join-Path $ProjectRoot "MEME_CAPSULE_KNOWLEDGE.md")) {
+    $LocalPath = Join-Path $ProjectRoot "MEME_CAPSULE_KNOWLEDGE.md"
+  } else {
+    $LocalPath = Join-Path $ProjectRoot "docs\MEME_CAPSULE_KNOWLEDGE.md"
+  }
+}
 
 $token = $env:CAPSULE_TOKEN
 if (-not $token) {
@@ -14,8 +34,32 @@ if (-not $token) {
     $token = [System.Environment]::GetEnvironmentVariable('CAPSULE_TOKEN', 'Machine')
   }
 }
-if (-not $token) { Write-Error "CAPSULE_TOKEN not set. Set CAPSULE_TOKEN environment variable first."; exit 1 }
-if (-not (Test-Path $MetaPath)) { Write-Error "Run fetch-knowledge.ps1 first."; exit 1 }
+if (-not $token) {
+  $envFiles = @(
+    (Join-Path $ScriptDir ".env"),
+    (Join-Path $ProjectRoot ".env")
+  )
+  foreach ($ef in $envFiles) {
+    if (Test-Path $ef) {
+      Get-Content $ef | ForEach-Object {
+        if ($_ -match "^\s*CAPSULE_TOKEN\s*=\s*(.+?)\s*$") {
+          $token = $matches[1].Trim('"').Trim("'")
+        }
+      }
+      if ($token) { break }
+    }
+  }
+}
+
+if (-not $token) {
+  Write-Error "CAPSULE_TOKEN not set. Set CAPSULE_TOKEN environment variable or add it to .knowledge/.env first."
+  exit 1
+}
+
+if (-not (Test-Path $MetaPath)) {
+  Write-Error "Metadata file $MetaPath not found. Run fetch-knowledge.ps1 first."
+  exit 1
+}
 
 $sha = (Get-Content $MetaPath -Encoding UTF8 | ConvertFrom-Json).sha
 
@@ -76,9 +120,9 @@ try {
 
   if ($statusCode -eq 409) {
     Write-Warning "CONFLICT DETECTED (HTTP 409): Someone updated the file on GitHub after your last fetch."
-    Write-Warning "1. Run fetch-knowledge.ps1 to get the latest version."
+    Write-Warning "1. Run .knowledge\fetch-knowledge.ps1 to get the latest version."
     Write-Warning "2. Merge your changes into the updated file."
-    Write-Warning "3. Run update-knowledge.ps1 again."
+    Write-Warning "3. Run .knowledge\update-knowledge.ps1 again."
   } elseif ($statusCode -eq 403) {
     Write-Error "PERMISSION DENIED (HTTP 403): GitHub returned: '$errorMsg'."
     Write-Error "Your CAPSULE_TOKEN (Personal Access Token) does not have write access to '$Owner/$Repo'."

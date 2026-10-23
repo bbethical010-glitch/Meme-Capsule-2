@@ -16,8 +16,11 @@ export const onRequestOptions: PagesFunction<Env> = async () => {
 };
 
 // Handle GET requests with CORS headers attached
-export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
-  const meme = await randomMemeOrFallback(env);
+export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
+  const url = new URL(request.url);
+  const nsfwParam = url.searchParams.get("nsfw");
+  const allowNsfw = nsfwParam === "1" || nsfwParam?.toLowerCase() === "true";
+  const meme = await randomMemeOrFallback(env, { nsfw: allowNsfw });
   return json(
     { meme },
     {

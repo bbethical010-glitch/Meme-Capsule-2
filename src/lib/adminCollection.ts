@@ -51,7 +51,9 @@ export const normalizeAdminMeme = (meme: Partial<AdminMeme>): AdminMeme => ({
   rights_note: meme.rights_note?.trim() || "reviewed",
   curation_status: meme.curation_status ?? null,
   final_status: meme.final_status ?? null,
-  is_finalized_keep: meme.is_finalized_keep ?? (meme.curation_status === "keep")
+  is_finalized_keep: meme.is_finalized_keep ?? (meme.curation_status === "keep"),
+  is_nsfw: meme.is_nsfw ?? 0,
+  nsfw_flagged_by: meme.nsfw_flagged_by ?? null
 });
 
 export const readAdminCollection = () =>

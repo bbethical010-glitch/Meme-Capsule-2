@@ -46,10 +46,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       if (!meme) {
         return json({ error: "Meme not found." }, { status: 404 });
       }
-      await env.DB.prepare("UPDATE memes SET is_nsfw = ? WHERE id = ?")
-        .bind(body.is_nsfw ? 1 : 0, memeId)
+      const flaggedBy = body.is_nsfw ? "curator" : null;
+      await env.DB.prepare("UPDATE memes SET is_nsfw = ?, nsfw_flagged_by = ? WHERE id = ?")
+        .bind(body.is_nsfw ? 1 : 0, flaggedBy, memeId)
         .run();
-      return json({ success: true, meme_id: memeId, is_nsfw: body.is_nsfw });
+      return json({ success: true, meme_id: memeId, is_nsfw: body.is_nsfw, nsfw_flagged_by: flaggedBy });
     }
 
     if (!corpusStatus || !["keep", "excluded", "duplicate", "review_later"].includes(corpusStatus)) {

@@ -27,6 +27,8 @@ const ANNOTATIONS = {
   'api': 'API route handlers',
   'random-meme.ts': 'GET /api/random-meme — public',
   'daily-meme.ts': 'GET /api/daily-meme — public',
+  'nsfw.ts': 'PATCH /api/curate/nsfw — Curator NSFW flag toggle',
+  '013_add_nsfw_flag.sql': 'D1 migration 013: is_nsfw & nsfw_flagged_by columns',
   'admin': 'Admin dashboard',
   'memes.ts': 'GET/POST/PATCH/DELETE /api/admin/memes',
   'upload.ts': 'POST /api/admin/upload',

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-13
+
+- **Single-Judge Adoption & Authoritative Finality**: Added `POST /api/curate/approve` allowing human curators to finalize decisions directly into `meme_curation_final` and update `memes` atomically, bypassing SuperAdmin arbitration for approved workflows.
+- **Dual Hotkey Force Remove**: Added direct purge via `Shift+Delete` (`POST /api/curate/force-remove`) in `/curate` alongside the modal reason workflow (`Shift+X`).
+- **Cross-Codebase Knowledge Sync Architecture**: Established standardized `.knowledge/` sync tooling (`fetch-knowledge` and `update-knowledge` in both PowerShell and Bash) targeting `editorav010-dev/meme-capsule-sync` with metadata tracking in `.knowledge/.knowledge_meta.json`.
+- **Database & State Documentation Sync**: Updated migration catalog to 14 total migrations (including `011_force_removals.sql` and `meme_force_removals` table schema).
+
 ## 2026-10-09
 
 - Added **Force Remove** feature across `/curate` and `/categorise` portals:

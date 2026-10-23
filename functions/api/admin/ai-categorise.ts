@@ -1,3 +1,4 @@
+import type { PagesFunction } from '../../_shared/pages'
 import type { Env } from '../../_shared/d1r2'
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
@@ -69,31 +70,61 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   const resolvedMemeId = meme.id
 
-  await env.DB.prepare(`
-    UPDATE memes SET
-      ai_category       = ?,
-      ai_confidence     = ?,
-      ai_reasoning      = ?,
-      ai_categorised_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-      ai_model          = ?
-    WHERE id = ?
-  `)
-    .bind(
-      category_id || null,
-      confidence,
-      reasoning,
-      model,
-      resolvedMemeId
-    )
-    .run()
+  const isNsfwFlag = Boolean(
+    body.is_nsfw === 1 ||
+    body.is_nsfw === true ||
+    body.nsfw === 1 ||
+    body.nsfw === true ||
+    body.is_toxic === true ||
+    body.toxicity_flag === true
+  )
 
-
+  if (isNsfwFlag) {
+    await env.DB.prepare(`
+      UPDATE memes SET
+        ai_category       = ?,
+        ai_confidence     = ?,
+        ai_reasoning      = ?,
+        ai_categorised_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        ai_model          = ?,
+        is_nsfw           = 1,
+        nsfw_flagged_by   = 'ai-judge'
+      WHERE id = ?
+    `)
+      .bind(
+        category_id || null,
+        confidence,
+        reasoning,
+        model,
+        resolvedMemeId
+      )
+      .run()
+  } else {
+    await env.DB.prepare(`
+      UPDATE memes SET
+        ai_category       = ?,
+        ai_confidence     = ?,
+        ai_reasoning      = ?,
+        ai_categorised_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        ai_model          = ?
+      WHERE id = ?
+    `)
+      .bind(
+        category_id || null,
+        confidence,
+        reasoning,
+        model,
+        resolvedMemeId
+      )
+      .run()
+  }
 
   return Response.json({
     success: true,
     meme_id: resolvedMemeId,
     storage_path: meme.storage_path,
     category: category_id,
-    confidence
+    confidence,
+    is_nsfw: isNsfwFlag ? 1 : 0
   })
 }

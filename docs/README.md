@@ -37,7 +37,8 @@ Meme Capsule operates across three decoupled codebases:
 - [`AGENT_RULES.md`](./AGENT_RULES.md) — Mandatory operating guidelines, protected areas, and testing protocols.
 - [`MEME_CAPSULE_KNOWLEDGE.md`](./MEME_CAPSULE_KNOWLEDGE.md) — Master product & technical specification, core product FAQs, and multi-codebase architecture.
 - [`PRIVACY_COOKIES_AND_DATA_FLOWS.md`](./PRIVACY_COOKIES_AND_DATA_FLOWS.md) — Exhaustive audit of website cookies, Formspree contact form, GA4 telemetry, AdMob integration, and Google Play Data Safety declarations.
-- [`DATABASE.md`](./DATABASE.md) — Cloudflare D1 SQLite database schemas, 13 migrations, and R2 media bucket architecture.
+- [`DATABASE.md`](./DATABASE.md) — Cloudflare D1 SQLite database schemas, 14 migrations, and R2 media bucket architecture.
+- [`majority-consensus-curation-walkthrough.md`](./majority-consensus-curation-walkthrough.md) — detailed walkthrough of the three-judge consensus implementation, architecture diagrams, changed-file inventory, and acceptance evidence.
 - [`PROJECT_STRUCTURE.md`](./PROJECT_STRUCTURE.md) — Detailed directory mapping, route mappings, and component hierarchy.
 - [`README_ANALYTICS.md`](./README_ANALYTICS.md) — Analytics tracking SDK, ingestion API, and worker aggregation pipeline.
 - [`report.md`](./report.md) — Google Lighthouse audit analysis, Core Web Vitals, accessibility, and backend caching remediation report.
@@ -53,6 +54,8 @@ Meme Capsule operates across three decoupled codebases:
 - **Curation & Categorization Engine (`/curate`, `/categorise`)**:
   - Multi-judge consensus system with token authentication (`cat_users`).
   - Layer 0 editorial keyboard shortcuts (`K` keep, `E` exclude, `D` duplicate, `L` review later).
+  - Three-human majority consensus (`POST /api/curate/approve`) with blind independent votes, 2:1/3:0 finalization, and SuperAdmin arbitration for unresolved splits.
+  - Permanent Force Remove hotkeys (`Shift+Delete` instant purge, `Shift+X` modal with reason) purging D1 metadata, R2 objects, and logging to `meme_force_removals`.
   - Multi-topic taxonomy tagging, tone labeling, and humour mechanism tagging.
   - Superadmin resolution dashboard for arbitrating conflicting judge votes.
 - **AI Pre-Judge Assisted Loop (`/ai-judge`)**:

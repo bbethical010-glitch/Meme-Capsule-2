@@ -24,12 +24,16 @@ export interface SuperSummaryResponse {
   resolved_active_count?: number;
   resolved_excluded_count?: number;
   total_resolved_count?: number;
+  total_force_removed?: number;
+  total_exclude_votes?: number;
   percent_resolved: number;
   consensus_metrics: {
     unreviewed: number;
     single_review: number;
     unanimous_keep: number;
     unanimous_exclude: number;
+    majority_keep?: number;
+    majority_exclude?: number;
     conflicts: number;
     total_with_reviews: number;
   };
@@ -41,6 +45,7 @@ export interface SuperSummaryResponse {
     excluded: number;
     duplicates: number;
     review_later: number;
+    force_removed?: number;
     last_active: string;
   }[];
   ai_judge?: {
@@ -56,7 +61,20 @@ export interface SuperMemeItem {
   id: string;
   title: string;
   image_url: string;
-  consensus_status: "unanimous_keep" | "unanimous_exclude" | "conflict" | "single_review" | "unreviewed" | "resolved";
+  consensus_status:
+    | "unanimous_keep"
+    | "unanimous_exclude"
+    | "unanimous_duplicate"
+    | "unanimous_review_later"
+    | "majority_keep"
+    | "majority_exclude"
+    | "majority_duplicate"
+    | "majority_review_later"
+    | "conflict"
+    | "single_review"
+    | "pending_reviews"
+    | "unreviewed"
+    | "resolved";
   judges_count: number;
   judges: {
     user_id: string;

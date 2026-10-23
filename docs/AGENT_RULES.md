@@ -12,6 +12,7 @@
 4. **No Placeholders or Fake Code**: Every change must be functional, tested, and complete. Never leave `// TODO`, mock data replacements, or half-implemented features.
 5. **The Repository is the Source of Truth**: Treat workspace files, existing migrations, and markdown documentation as the persistent project memory. Never guess when information can be verified in the codebase.
 6. **Mandatory Documentation Synchronization**: Documentation is never optional. Every agent MUST update all affected Markdown documents in `docs/` and the workspace after every change, feature addition, or refactor. Never mark a task complete without keeping documentation fully synchronized.
+7. **Mandatory Remote Git Coordination & Sync**: Before planning or implementing any feature, agents must check remote git state (`git fetch origin`, inspect `origin/main` / PRs) to ensure their branch is up to date and that teammates haven't already implemented or merged the feature. Never write code or propose architectures on a stale branch without verifying recent remote activity.
 
 ---
 
@@ -21,7 +22,7 @@ The following core architectural assets and components are protected. AI agents 
 
 ### A. Established Architecture & Infrastructure
 - **Cloudflare Pages Functions (`functions/api/`)**: The serverless API architecture using Cloudflare bindings (`env.DB` for D1 and `env.BUCKET` for R2). Do not replace this with Express, Next.js, or external servers.
-- **Cloudflare D1 Database (`d1/migrations/`)**: Existing migration files (`000_complete_setup.sql` through `012_add_curation_status_to_memes.sql`) are historical database artifacts representing 13 production migrations. Never modify or delete past migration files. Add new migration files incrementally.
+- **Cloudflare D1 Database (`d1/migrations/`)**: Existing migration files (`000_complete_setup.sql` through `012_add_curation_status_to_memes.sql`) are historical database artifacts representing 14 production migrations. Never modify or delete past migration files. Add new migration files incrementally.
 - **R2 Storage Integration**: The media bucket binding (`env.BUCKET`) and public asset URL resolution (`env.R2_PUBLIC_URL`).
 - **Cloudflare Configuration**: `wrangler.toml`, `.dev.vars`, and environment bindings.
 
@@ -35,10 +36,15 @@ The following core architectural assets and components are protected. AI agents 
 - **Judge & Curator Sessions**: SHA-256 password verification and 8-hour token session management in `functions/_shared/catAuth.ts`.
 - **Admin Reset Security**: Verification code challenge for destructive admin operations (such as resetting analytics algorithms).
 
-### D. Core Working Features
+### D. Core Working Features & Consensus Rules
 - **Public Meme Delivery**: `/api/memes/random`, `/api/memes/daily`, `/api/memes/reactions`.
 - **Admin Dashboard (`/admin`)**: Storage sync from R2, SQL query execution, metadata editing, analytics resets, CSV/Excel exports.
 - **Curator & Super Admin Portal (`/curate`)**: Multi-judge login (`cat_users`), keyboard-driven curation (`meme_curation`), conflict arbitration (`CuratorResolveModal`), batch consensus, and authoritative resolutions (`meme_curation_final`).
+- **Multi-Judge Role Division (Strict Business Rule)**:
+  - **Judges 1, 2, and 3 (Human)**: Exclusively govern consensus (unanimous keep, unanimous exclude, duplicate agreement, split/conflicts) and SuperAdmin arbitration.
+  - **Judges 4 and 5 (AI Pre-Evaluators)**: Provide assistive pre-evaluations to improve human efficiency. **AI judges MUST NEVER push conflicts, arguments, or blockers onto the SuperAdmin console, nor trigger arbitration states.** Their votes are visible for human reference and quick adoption ("⚡ ADOPT DECISION") only.
+  - **All 5 Judges Visible on Dashboard**: The SuperAdmin live progress strip and comparison matrices MUST always display all 5 configured judges (3 Human + 2 AI). Never filter out Judges 4 and 5 from progress reporting.
+  - **Mandatory Exclude & Force-Remove Audit**: Every judge's "Exclude" votes (`{j.excluded}`) and "Force Remove" purges (`{j.force_removed}`) MUST be explicitly counted and visibly rendered on the SuperAdmin dashboard. All force removals must record an immutable row in `meme_force_removals`.
 
 ---
 
@@ -49,28 +55,32 @@ Every AI coding agent must adhere to this step-by-step workflow:
 ```text
 1. READ AGENT_RULES.md
    ↓
-2. INSPECT WORKSPACE & DOCUMENTATION (GEMINI.md, docs/, schema)
+2. SYNC WITH REMOTE & INSPECT GIT STATE (git fetch origin, check origin/main)
    ↓
-3. PLAN CHANGE & IDENTIFY RELEVANT FILES ONLY
+3. INSPECT WORKSPACE & DOCUMENTATION (GEMINI.md, docs/, schema)
    ↓
-4. IMPLEMENT FOCUSED CHANGES (Follow existing patterns & styles)
+4. PLAN CHANGE & IDENTIFY RELEVANT FILES ONLY
    ↓
-5. TEST THOROUGHLY (npm run build, runtime validation)
+5. IMPLEMENT FOCUSED CHANGES (Follow existing patterns & styles)
    ↓
-6. "DON'T STOP AT THE FIRST ERROR" (Diagnose root causes, rerun tests)
+6. TEST THOROUGHLY (npm run build, runtime validation)
    ↓
-7. UPDATE RELEVANT DOCUMENTATION (README, docs, walkthrough)
+7. "DON'T STOP AT THE FIRST ERROR" (Diagnose root causes, rerun tests)
    ↓
-8. PRE-COMMIT CHECKLIST
+8. UPDATE RELEVANT DOCUMENTATION (README, docs, walkthrough)
    ↓
-9. ATOMIC GIT COMMIT & PUSH
+9. PRE-COMMIT CHECKLIST
+   ↓
+10. ATOMIC GIT COMMIT & PUSH
 ```
 
 ### Before Changing Code:
 1. Read `AGENT_RULES.md` completely.
-2. Read project context in `GEMINI.md`, `CLAUDE.md`, and `docs/`.
-3. Check git status to ensure working on a clean tree.
-4. Locate existing utilities, middleware, and shared types before creating new ones.
+2. **Synchronize with Remote Repository**: Run `git fetch origin` and check for recent commits or PRs on `origin/main` (`git log HEAD..origin/main --oneline`). If the branch is behind, rebase or merge `origin/main` before designing or implementing changes.
+3. **Verify Feature Non-Duplication**: Confirm that colleagues haven't already implemented, reviewed, or auto-merged the requested feature or a counterpart. Check commit messages, PRs, and schema migrations. If an overlap exists, notify the user and coordinate immediately instead of writing duplicate code that leads to painful merge conflicts.
+4. Read project context in `GEMINI.md`, `CLAUDE.md`, and `docs/`.
+5. Check git status to ensure working on a clean tree.
+6. Locate existing utilities, middleware, and shared types before creating new ones.
 
 ### During Implementation:
 - Keep changes minimal and surgically focused on the task.
@@ -87,6 +97,10 @@ No task is complete until verified. Agents **MUST NOT** proclaim completion with
 1. **Build Verification**: Run `npm run build` to verify TypeScript types, Vite bundling, and asset integrity.
 2. **Zero Uncaught Errors**: Ensure no syntax errors, missing imports, or unhandled promise rejections exist in console logs.
 3. **Database & API Integrity**: Verify that SQL queries, column names, and API parameters match the actual D1 schema.
+4. **Zero-Tolerance Schema Drift Rule (CRITICAL)**:
+   - **NEVER** write or deploy edge queries selecting new or modified database columns without FIRST physically verifying the live D1 schema via `PRAGMA table_info(<table>)` or applying migration files.
+   - Presumptive querying of columns before live migration is strictly prohibited (this was the root cause of the October 2026 outage where `m.nsfw_flagged_by` crashed `/api/curate/next` with 500, locking all judges out and falsely showing 0% progress).
+   - If querying newly added metadata columns, write defensive fallbacks (e.g. `try { ... } catch { ... }` or column presence checks) to protect production availability during deployment rollouts.
 
 ---
 
@@ -125,9 +139,14 @@ If a test, build, or command fails:
 ## 7. Pre-Commit Checklist
 
 Before committing and pushing to git, confirm:
+- [ ] Did I verify against `origin/main` that no remote commits conflict with or duplicate my changes?
 - [ ] Did I implement exactly what was requested without touching unrelated features?
 - [ ] Are existing working features (Public app, Admin, Curator, Reports, API) unaffected?
-- [ ] Did `npm run build` pass with 0 errors?
+- [ ] **Did I verify that all SQL column references physically exist in the live D1 schema (Zero Schema Drift)?**
+- [ ] **Are AI Judges (4 & 5) restricted to advisory pre-evaluations without pushing conflicts or arbitration to SuperAdmin?**
+- [ ] **Are all 5 configured judges visible on the SuperAdmin live progress dashboard?**
+- [ ] **Are Exclude votes and Force Remove / Purge actions counted and visible for every judge?**
+- [ ] Did `npm run build` and tests pass with 0 errors?
 - [ ] Did I remove all debug `console.log` statements, scratch files, and temporary artifacts?
 - [ ] **Are all affected Markdown documentation files updated and synchronized?**
 - [ ] Is the git commit message clear, descriptive, and formatted with conventional commits (e.g. `feat: ...`, `fix: ...`, `docs: ...`)?
@@ -149,17 +168,17 @@ It is NOT part of this repository — it syncs via a separate GitHub repository 
 
 **BEFORE starting any task:**
 1. Always fetch the latest version first:
-   - Windows: `powershell -File fetch-knowledge.ps1`
-   - Mac/Linux: `./fetch-knowledge.sh`
+   - Windows: `powershell -ExecutionPolicy Bypass -File .knowledge/fetch-knowledge.ps1`
+   - Mac/Linux: `bash .knowledge/fetch-knowledge.sh`
 2. Read `docs/MEME_CAPSULE_KNOWLEDGE.md` fully before writing any code or changing configuration.
 
 **AFTER any meaningful change:**
 (new feature, architecture decision, bug fix, workflow change, new dependency, table migration):
 1. Update `docs/MEME_CAPSULE_KNOWLEDGE.md` with the new relevant notes.
 2. Push the updated knowledge file back to the shared repository:
-   - Windows: `powershell -File update-knowledge.ps1`
-   - Mac/Linux: `./update-knowledge.sh`
-3. If a **CONFLICT** is reported — stop, run `fetch-knowledge.ps1` fresh, manually merge your new notes into the fresh file, then run `update-knowledge.ps1` again. Never force-push or skip the fetch before pushing.
+   - Windows: `powershell -ExecutionPolicy Bypass -File .knowledge/update-knowledge.ps1`
+   - Mac/Linux: `bash .knowledge/update-knowledge.sh`
+3. If a **CONFLICT** is reported — stop, run `.knowledge/fetch-knowledge.ps1` (or `bash .knowledge/fetch-knowledge.sh`) fresh, manually merge your new notes into the fresh file, then run the update script again. Never force-push or skip the fetch before pushing.
 
 ---
 

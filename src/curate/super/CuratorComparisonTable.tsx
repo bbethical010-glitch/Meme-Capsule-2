@@ -32,10 +32,19 @@ export default function CuratorComparisonTable({
         return <span style={{ background: "#9b30ff", color: "#fff", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>UNANIMOUS KEEP</span>;
       case "unanimous_exclude":
         return <span style={{ background: "#FF3B30", color: "#fff", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>UNANIMOUS EXCLUDE</span>;
+      case "majority_keep":
+        return <span style={{ background: "#007AFF", color: "#fff", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>2:1 MAJORITY KEEP</span>;
+      case "majority_exclude":
+        return <span style={{ background: "#FF9500", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>2:1 MAJORITY EXCLUDE</span>;
+      case "unanimous_duplicate":
+      case "majority_duplicate":
+        return <span style={{ background: "#FF9F0A", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>DUPLICATE CONSENSUS</span>;
       case "conflict":
-        return <span style={{ background: "#FF9F0A", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>⚠️ CONFLICT</span>;
+        return <span style={{ background: "#FF453A", color: "#fff", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>⚠️ 1:1:1 CONFLICT</span>;
       case "single_review":
         return <span style={{ background: "#444", color: "#ddd", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>1 REVIEW</span>;
+      case "pending_reviews":
+        return <span style={{ background: "#262626", color: "#aaa", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>PENDING REVIEWS</span>;
       default:
         return <span style={{ background: "#262626", color: "#888", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>UNREVIEWED</span>;
     }

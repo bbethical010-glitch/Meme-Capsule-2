@@ -65,8 +65,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const curatorNote = (body.curator_note || "").trim() || null;
     const now = new Date().toISOString();
 
-    // Upsert into meme_curation_final
-    await env.DB.prepare(`
+    // Only keep/excluded are represented in meme_curation_final. Duplicate and
+    // review_later outcomes are authoritative directly on memes.
+    if (corpusStatus === "keep" || corpusStatus === "excluded") {
+      await env.DB.prepare(`
       INSERT INTO meme_curation_final (
         meme_id,
         corpus_status,
@@ -90,20 +92,21 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         resolved_by = excluded.resolved_by,
         resolved_at = excluded.resolved_at,
         updated_at = excluded.updated_at
-    `)
-      .bind(
-        memeId,
-        corpusStatus,
-        duplicateOf,
-        JSON.stringify(topics),
-        tone,
-        JSON.stringify(mechanisms),
-        curatorNote,
-        sessionUser.display_name || "Super Admin",
-        now,
-        now,
-      )
-      .run();
+      `)
+        .bind(
+          memeId,
+          corpusStatus,
+          duplicateOf,
+          JSON.stringify(topics),
+          tone,
+          JSON.stringify(mechanisms),
+          curatorNote,
+          sessionUser.display_name || "Super Admin",
+          now,
+          now,
+        )
+        .run();
+    }
 
     // Update active state and status in memes table
     // Superadmin Finalization is the authoritative gate:
@@ -114,15 +117,15 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     if (corpusStatus === "keep" && topics.length > 0) {
       await env.DB.prepare(
-        "UPDATE memes SET is_active = ?, status = ?, curation_status = ?, tags = ?, category = COALESCE(?, category) WHERE id = ?"
+        "UPDATE memes SET is_active = ?, status = ?, curation_status = ?, duplicate_of = ?, topics = ?, tone = ?, humour_mechanisms = ?, tags = ?, category = COALESCE(?, category) WHERE id = ?"
       )
-        .bind(isActive, newStatus, corpusStatus, JSON.stringify(topics), topics[0] || null, memeId)
+        .bind(isActive, newStatus, corpusStatus, duplicateOf, JSON.stringify(topics), tone, JSON.stringify(mechanisms), JSON.stringify(topics), topics[0] || null, memeId)
         .run();
     } else {
       await env.DB.prepare(
-        "UPDATE memes SET is_active = ?, status = ?, curation_status = ? WHERE id = ?"
+        "UPDATE memes SET is_active = ?, status = ?, curation_status = ?, duplicate_of = ?, topics = ?, tone = ?, humour_mechanisms = ? WHERE id = ?"
       )
-        .bind(isActive, newStatus, corpusStatus, memeId)
+        .bind(isActive, newStatus, corpusStatus, duplicateOf, JSON.stringify(topics), tone, JSON.stringify(mechanisms), memeId)
         .run();
     }
 

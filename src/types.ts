@@ -20,4 +20,6 @@ export type Meme = {
   media_type?: MemeMediaType;
   input_method?: MemeInputMethod;
   likes_count?: number;
+  is_nsfw?: number | boolean;
+  nsfw_flagged_by?: "ai-judge" | "curator" | "report" | string | null;
 };

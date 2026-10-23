@@ -97,6 +97,14 @@ const MemeRow = React.memo(function MemeRow({ meme, backendMode, onEdit, onDelet
           ) : (
             <span className={`badge brutalist-border-sm ${meme.status}`}>{meme.status}</span>
           )}
+          {Boolean((meme as any).is_nsfw) && (
+            <span
+              className="badge brutalist-border-sm nsfw"
+              style={{ background: "#dd0061", color: "#ffffff", borderColor: "#dd0061", fontWeight: 700 }}
+            >
+              NSFW
+            </span>
+          )}
           <span className="likes-count">
             <span className="material-symbols-outlined">favorite</span> {meme.likes_count ?? 0}
           </span>
@@ -160,7 +168,7 @@ export default function AdminApp() {
 
   // Filtering & Pagination
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "draft" | "archived" | "excluded">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "draft" | "archived" | "excluded" | "nsfw">("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -181,13 +189,15 @@ export default function AdminApp() {
     let drafts = 0;
     let uncurated = 0;
     let excluded = 0;
+    let nsfw = 0;
     for (const m of collection) {
+      if ((m as any).is_nsfw) nsfw++;
       if (m.status === "active") active++;
       else if (m.status === "draft") drafts++;
       else if (m.curation_status === "excluded") excluded++;
       else uncurated++; // status === "archived" and not excluded
     }
-    return { active, drafts, archived: uncurated, excluded, total: collection.length };
+    return { active, drafts, archived: uncurated, excluded, nsfw, total: collection.length };
   }, [collection]);
 
   // Filtered and paginated list for instantaneous UI responsiveness
@@ -198,6 +208,7 @@ export default function AdminApp() {
       if (statusFilter === "draft" && meme.status !== "draft") return false;
       if (statusFilter === "excluded" && meme.curation_status !== "excluded") return false;
       if (statusFilter === "archived" && (meme.status !== "archived" || meme.curation_status === "excluded")) return false;
+      if (statusFilter === "nsfw" && !(meme as any).is_nsfw) return false;
 
       if (!term) return true;
       return (
@@ -339,6 +350,41 @@ export default function AdminApp() {
       setSyncActionName("");
     }
   };
+
+  const handleAutoRefresh = useCallback(async () => {
+    if (!adminToken.trim()) return;
+    try {
+      const response = await fetch("/api/admin/memes", {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          "X-Admin-Token": adminToken
+        },
+        cache: "no-store"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok && payload.memes) {
+        setCollection((payload.memes || []).map(normalizeAdminMeme));
+        setBackendConfig(payload.config || {});
+        setBackendMode(true);
+        const activeCount = (payload.memes || []).filter((m: any) => m.status === "active").length;
+        setBackendActiveCount(activeCount);
+      }
+    } catch {
+      // Silent error on background auto-refresh
+    }
+  }, [adminToken]);
+
+  // Intercept Ctrl+R / Cmd+R to refresh admin data without browser page reload
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        handleAutoRefresh();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleAutoRefresh]);
 
   const useLocalMode = () => {
     setCollection(readAdminCollection());
@@ -545,6 +591,27 @@ export default function AdminApp() {
             />
           </div>
           <button
+            onClick={() => handleAutoRefresh()}
+            className="icon-btn brutalist-interactive"
+            title="Refresh Data (Ctrl+R)"
+            disabled={isSyncing}
+            style={{
+              background: "#222",
+              border: "1px solid #f4c300",
+              color: "#f4c300",
+              padding: "6px 12px",
+              fontFamily: "Anton",
+              fontSize: "12px",
+              cursor: isSyncing ? "wait" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px"
+            }}
+          >
+            <span>🔄</span>
+            {isSyncing ? "SYNCING..." : "REFRESH (Ctrl+R)"}
+          </button>
+          <button
             onClick={adminToken ? loadBackend : saveToken}
             className="icon-btn brutalist-interactive"
             title="Sync / Load Backend"
@@ -639,6 +706,10 @@ export default function AdminApp() {
               <p>Drafts</p>
               <p className="stat-value drafts">{stats.drafts}</p>
             </div>
+            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive" style={{ borderLeft: "4px solid #dd0061" }}>
+              <p style={{ color: "#dd0061" }}>NSFW</p>
+              <p className="stat-value" style={{ color: "#dd0061" }}>{stats.nsfw}</p>
+            </div>
           </section>
 
           {notice && (
@@ -693,7 +764,7 @@ export default function AdminApp() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <h3>Meme Vault ({filteredCollection.length})</h3>
                     <div style={{ display: "flex", gap: "4px" }}>
-                      {(["all", "active", "excluded", "archived", "draft"] as const).map((st) => (
+                      {(["all", "active", "excluded", "archived", "draft", "nsfw"] as const).map((st) => (
                         <button
                           key={st}
                           type="button"
@@ -707,12 +778,12 @@ export default function AdminApp() {
                             fontSize: "11px",
                             fontWeight: 700,
                             textTransform: "uppercase",
-                            background: statusFilter === st ? (st === "excluded" ? "#FF3B30" : "var(--primary)") : "var(--surface)",
+                            background: statusFilter === st ? (st === "excluded" ? "#FF3B30" : st === "nsfw" ? "#dd0061" : "var(--primary)") : "var(--surface)",
                             color: statusFilter === st ? "#ffffff" : "var(--on-surface)",
                             cursor: "pointer"
                           }}
                         >
-                          {st === "all" ? `all (${stats.total})` : st === "active" ? `active (${stats.active})` : st === "excluded" ? `excluded (${stats.excluded})` : st === "archived" ? `archived (${stats.archived})` : `draft (${stats.drafts})`}
+                          {st === "all" ? `all (${stats.total})` : st === "active" ? `active (${stats.active})` : st === "excluded" ? `excluded (${stats.excluded})` : st === "archived" ? `archived (${stats.archived})` : st === "nsfw" ? `nsfw (${stats.nsfw})` : `draft (${stats.drafts})`}
                         </button>
                       ))}
                     </div>

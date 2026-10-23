@@ -2,7 +2,7 @@ import type { PagesFunction } from "./_shared/pages";
 import { json, requireAdmin, type Env } from "./_shared/d1r2";
 
 type ReportStatus = "pending" | "resolved" | "dismissed";
-type ReportAction = ReportStatus | "archive_meme" | "blacklist_meme";
+type ReportAction = ReportStatus | "archive_meme" | "blacklist_meme" | "mark_nsfw";
 
 type ReportRow = {
   id: string | number;
@@ -221,7 +221,7 @@ const dashboardHtml = String.raw`<!doctype html>
             '<div class="actions">'+
               (report.status!=="resolved"?'<button class="resolve" data-id="'+escapeHtml(id)+'" data-action="resolved" type="button">Resolve</button>':"")+
               (report.status!=="dismissed"?'<button class="danger" data-id="'+escapeHtml(id)+'" data-action="dismissed" type="button">Dismiss</button>':"")+
-              (report.meme_id?'<button class="danger" data-id="'+escapeHtml(id)+'" data-action="archive_meme" data-meme-id="'+escapeHtml(report.meme_id)+'" type="button">Remove Meme</button><button class="danger" data-id="'+escapeHtml(id)+'" data-action="blacklist_meme" data-meme-id="'+escapeHtml(report.meme_id)+'" type="button">Blacklist + Remove</button>':"")+
+              (report.meme_id?'<button class="danger" data-id="'+escapeHtml(id)+'" data-action="archive_meme" data-meme-id="'+escapeHtml(report.meme_id)+'" type="button">Remove Meme</button><button class="danger" data-id="'+escapeHtml(id)+'" data-action="blacklist_meme" data-meme-id="'+escapeHtml(report.meme_id)+'" type="button">Blacklist + Remove</button>'+(String(report.reason||'').toUpperCase()==='NSFW'?'<button class="secondary" style="background:#dd0061;color:#fff;" data-id="'+escapeHtml(id)+'" data-action="mark_nsfw" data-meme-id="'+escapeHtml(report.meme_id)+'" type="button">Mark NSFW</button>':''):"")+
             '</div>'+
           '</div>'+
         '</article>';
@@ -242,7 +242,7 @@ const dashboardHtml = String.raw`<!doctype html>
       try{
         const response=await fetch("/reports",{method:"PATCH",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({id,action,meme_id:button.dataset.memeId})});
         if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw).error||raw}catch{}throw new Error(message||"Update failed ("+response.status+").")}
-        showToast(action==="archive_meme"?"Meme removed and report resolved.":action==="blacklist_meme"?"Meme blacklisted, removed, and report resolved.":"Report #"+id+" marked "+action+".","success");await load();
+        showToast(action==="archive_meme"?"Meme removed and report resolved.":action==="blacklist_meme"?"Meme blacklisted, removed, and report resolved.":action==="mark_nsfw"?"Meme marked NSFW and report resolved.":"Report #"+id+" marked "+action+".","success");await load();
       }catch(error){button.disabled=false;button.textContent=original;showToast(error instanceof Error?error.message:"Unable to update report.")}
     };
     $("unlock").addEventListener("click",async()=>{state.token=$("token").value.trim();if(!state.token){$("login-error").textContent="Admin API token is required.";return}$("login-error").textContent="";sessionStorage.setItem("meme-capsule-report-token",state.token);try{await load()}catch(error){$("login-error").textContent=error instanceof Error?error.message:"Unable to open report desk."}});
@@ -316,7 +316,7 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
 
   const id = payload.id === undefined || payload.id === null ? "" : String(payload.id).trim();
   const action = payload.action;
-  if (!id || !action || !["pending", "resolved", "dismissed", "archive_meme", "blacklist_meme"].includes(action)) {
+  if (!id || !action || !["pending", "resolved", "dismissed", "archive_meme", "blacklist_meme", "mark_nsfw"].includes(action)) {
     return json({ error: "A report id and valid moderation action are required." }, { status: 400 });
   }
 
@@ -325,6 +325,22 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   ).bind(id).first<{ meme_id: string | null }>();
   if (!report) {
     return json({ error: "Report not found." }, { status: 404 });
+  }
+
+  if (action === "mark_nsfw") {
+    const memeId = String(report.meme_id || "").trim();
+    if (!memeId) {
+      return json({ error: "This report is not linked to a meme ID, so NSFW flag cannot be set." }, { status: 400 });
+    }
+
+    const meme = await env.DB.prepare("SELECT id FROM memes WHERE id = ?").bind(memeId).first<{ id: string }>();
+    if (!meme) {
+      return json({ error: "The reported meme no longer exists." }, { status: 404 });
+    }
+
+    await env.DB.prepare(
+      "UPDATE memes SET is_nsfw = 1, nsfw_flagged_by = 'report' WHERE id = ?"
+    ).bind(memeId).run();
   }
 
   if (action === "archive_meme" || action === "blacklist_meme") {
@@ -370,7 +386,7 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
     ).bind(memeId).run();
   }
 
-  const status: ReportStatus = action === "archive_meme" || action === "blacklist_meme"
+  const status: ReportStatus = (action === "archive_meme" || action === "blacklist_meme" || action === "mark_nsfw")
     ? "resolved"
     : action;
   const result = await env.DB.prepare(

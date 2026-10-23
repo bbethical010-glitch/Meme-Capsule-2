@@ -14,6 +14,11 @@ interface MemeRow {
   title: string | null;
   image_url: string | null;
   storage_path: string | null;
+  curation_status: string | null;
+  duplicate_of: string | null;
+  topics: string | null;
+  tone: string | null;
+  humour_mechanisms: string | null;
   final_status: string | null;
   final_duplicate_of: string | null;
   final_topics: string | null;
@@ -27,6 +32,7 @@ interface JudgeReviewRow {
   meme_id: string;
   user_id: string;
   user_name: string;
+  username?: string;
   corpus_status: string;
   duplicate_of: string | null;
   topics: string;
@@ -65,9 +71,34 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     if (filter === "resolved") {
-      baseQuery += " AND f.corpus_status IS NOT NULL";
+      baseQuery += " AND COALESCE(f.corpus_status, m.curation_status) IS NOT NULL";
     } else if (filter === "unresolved") {
-      baseQuery += " AND f.corpus_status IS NULL";
+      baseQuery += `
+        AND COALESCE(f.corpus_status, m.curation_status) IS NULL
+        AND (
+          SELECT COUNT(DISTINCT c.user_id)
+          FROM meme_curation c JOIN cat_users u ON u.id = c.user_id
+          WHERE c.meme_id = m.id AND u.username IN ('judge1', 'judge2', 'judge3')
+        ) = 3
+        AND (
+          (
+            SELECT COUNT(DISTINCT c.corpus_status)
+            FROM meme_curation c JOIN cat_users u ON u.id = c.user_id
+            WHERE c.meme_id = m.id AND u.username IN ('judge1', 'judge2', 'judge3')
+          ) = 3
+          OR (
+            (SELECT COUNT(*) FROM meme_curation c JOIN cat_users u ON u.id = c.user_id
+             WHERE c.meme_id = m.id AND u.username IN ('judge1', 'judge2', 'judge3') AND c.corpus_status = 'duplicate') >= 2
+            AND (
+              (SELECT COUNT(DISTINCT c.duplicate_of) FROM meme_curation c JOIN cat_users u ON u.id = c.user_id
+               WHERE c.meme_id = m.id AND u.username IN ('judge1', 'judge2', 'judge3') AND c.corpus_status = 'duplicate') <> 1
+              OR EXISTS (SELECT 1 FROM meme_curation c JOIN cat_users u ON u.id = c.user_id
+                         WHERE c.meme_id = m.id AND u.username IN ('judge1', 'judge2', 'judge3')
+                           AND c.corpus_status = 'duplicate' AND c.duplicate_of IS NULL)
+            )
+          )
+        )
+      `;
     }
 
     // Get total count
@@ -81,16 +112,21 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const query = `
       SELECT 
         m.id, m.title, m.image_url, m.storage_path,
-        f.corpus_status as final_status,
-        f.duplicate_of as final_duplicate_of,
-        f.topics as final_topics,
-        f.tone as final_tone,
-        f.humour_mechanisms as final_mechanisms,
+        m.curation_status,
+        m.duplicate_of,
+        m.topics,
+        m.tone,
+        m.humour_mechanisms,
+        COALESCE(f.corpus_status, m.curation_status) as final_status,
+        COALESCE(f.duplicate_of, m.duplicate_of) as final_duplicate_of,
+        COALESCE(f.topics, m.topics) as final_topics,
+        COALESCE(f.tone, m.tone) as final_tone,
+        COALESCE(f.humour_mechanisms, m.humour_mechanisms) as final_mechanisms,
         f.curator_note as final_note,
         f.resolved_at
       ${baseQuery}
       ORDER BY 
-        CASE WHEN f.corpus_status IS NULL THEN 0 ELSE 1 END ASC,
+        CASE WHEN COALESCE(f.corpus_status, m.curation_status) IS NULL THEN 0 ELSE 1 END ASC,
         m.uploaded_at ASC
       LIMIT ? OFFSET ?
     `;
@@ -102,18 +138,28 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const memes = memeRows || [];
     const memeIds = memes.map((m) => m.id);
 
-    // Fetch all judge reviews for these memes (Human judges only)
+    // Fetch all judge reviews for these memes (Both Human and AI judges)
     let reviews: JudgeReviewRow[] = [];
     if (memeIds.length > 0) {
       const placeholders = memeIds.map(() => "?").join(",");
       const { results: reviewResults } = await env.DB.prepare(`
         SELECT 
-          meme_id, user_id, user_name, corpus_status, duplicate_of,
-          topics, tone, humour_mechanisms, curator_note, reviewed_at
-        FROM meme_curation
-        WHERE meme_id IN (${placeholders})
-          AND user_name NOT IN ('AI Judge', 'Judge')
-        ORDER BY reviewed_at ASC
+          c.meme_id, c.user_id, c.user_name, c.corpus_status, c.duplicate_of,
+          c.topics, c.tone, c.humour_mechanisms, c.curator_note, c.reviewed_at,
+          u.username
+        FROM meme_curation c
+        JOIN cat_users u ON u.id = c.user_id
+        WHERE c.meme_id IN (${placeholders})
+          AND u.username IN ('judge1', 'judge2', 'judge3', 'judge4', 'judge5')
+        ORDER BY 
+          CASE u.username
+            WHEN 'judge1' THEN 1
+            WHEN 'judge2' THEN 2
+            WHEN 'judge3' THEN 3
+            WHEN 'judge4' THEN 4
+            WHEN 'judge5' THEN 5
+            ELSE 6
+          END ASC
       `).bind(...memeIds).all<JudgeReviewRow>();
       reviews = reviewResults || [];
     }
@@ -130,18 +176,53 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       const fullUrl = m.image_url || (m.storage_path && publicBase ? `${publicBase}/${m.storage_path.replace(/^\/+/, "")}` : "") || "";
       const memeReviews = reviewsByMeme.get(m.id) || [];
 
-      // Determine consensus state
+      // Determine consensus state STRICTLY from the 3 human judges.
+      // AI Judges (Judge 4 & 5) provide reference context only and NEVER push conflicts.
+      const humanReviews = memeReviews.filter((r) => ["judge1", "judge2", "judge3"].includes(r.username || ""));
+
       let consensusStatus = "unreviewed";
       if (m.final_status) {
         consensusStatus = "resolved";
-      } else if (memeReviews.length === 1) {
-        consensusStatus = "single_review";
-      } else if (memeReviews.length > 1) {
-        const first = memeReviews[0].corpus_status;
-        const allSame = memeReviews.every((r) => r.corpus_status === first);
-        if (allSame) {
-          consensusStatus = first === "keep" ? "unanimous_keep" : "unanimous_exclude";
-        } else {
+      } else if (humanReviews.length === 0) {
+        consensusStatus = "unreviewed";
+      } else if (humanReviews.length < 3) {
+        consensusStatus = "pending_reviews";
+      } else {
+        // All 3 human judges have submitted reviews
+        const statusCounts = new Map<string, number>();
+        for (const r of humanReviews) {
+          statusCounts.set(r.corpus_status, (statusCounts.get(r.corpus_status) || 0) + 1);
+        }
+
+        const keepCount = statusCounts.get("keep") || 0;
+        const excludeCount = statusCounts.get("excluded") || 0;
+        const dupCount = statusCounts.get("duplicate") || 0;
+        const laterCount = statusCounts.get("review_later") || 0;
+
+        // 1. Unanimous (3:0) agreements
+        if (keepCount === 3) {
+          consensusStatus = "unanimous_keep";
+        } else if (excludeCount === 3) {
+          consensusStatus = "unanimous_exclude";
+        } else if (dupCount === 3) {
+          const targets = new Set(humanReviews.filter((r) => r.corpus_status === "duplicate").map((r) => r.duplicate_of?.trim() || null));
+          consensusStatus = (targets.size === 1 && !targets.has(null)) ? "unanimous_duplicate" : "conflict";
+        } else if (laterCount === 3) {
+          consensusStatus = "unanimous_review_later";
+        }
+        // 2. Clear 2:1 Majorities (Majority wins!)
+        else if (keepCount === 2) {
+          consensusStatus = "majority_keep";
+        } else if (excludeCount === 2) {
+          consensusStatus = "majority_exclude";
+        } else if (dupCount === 2) {
+          const targets = new Set(humanReviews.filter((r) => r.corpus_status === "duplicate").map((r) => r.duplicate_of?.trim() || null));
+          consensusStatus = (targets.size === 1 && !targets.has(null)) ? "majority_duplicate" : "conflict";
+        } else if (laterCount === 2) {
+          consensusStatus = "majority_review_later";
+        }
+        // 3. True 1:1:1 Split (each judge voted differently)
+        else {
           consensusStatus = "conflict";
         }
       }
