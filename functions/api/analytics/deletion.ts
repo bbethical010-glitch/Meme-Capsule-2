@@ -71,6 +71,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         env.DB.prepare(
           "DELETE FROM android_analytics_events WHERE user_hash = ?"
         ).bind(userHash),
+        env.DB.prepare(
+          "DELETE FROM android_live_presence WHERE user_hash = ?"
+        ).bind(userHash),
         env.DB.prepare(`
           INSERT INTO android_analytics_deletion_audit (
             request_reference, user_hash, deleted_event_count, requested_by,

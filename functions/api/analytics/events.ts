@@ -1,5 +1,6 @@
 import type { PagesFunction } from "../../_shared/pages";
 import { json, type Env } from "../../_shared/d1r2";
+import { LIVE_PROPERTY_KEYS } from "../../_shared/liveAnalytics";
 
 const EVENT_NAMES = new Set([
   "app_open", "app_background", "session_start", "session_end", "meme_view",
@@ -16,9 +17,11 @@ const MAX_EVENT_BYTES = 8_192;
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const MAX_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
 const RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
-const RATE_LIMIT_PER_IP = 120;
+const RATE_LIMIT_PER_IP = 1200;
 const RATE_LIMIT_PER_TOKEN = 600;
-const FORBIDDEN_PROPERTY_KEY_RE = /(?:email|phone|contact|imei|mac|gps|latitude|longitude|gallery|name|token|secret)/i;
+const MAX_INSTALL_EVENTS_PER_HOUR = 1500;
+const MAX_SCALAR_PROPERTY_LENGTH = 128;
+const FUTURE_EVENT_TOLERANCE_MS = 5 * 60 * 1000;
 
 type RateLimitResult = {
   allowed: boolean;
@@ -55,7 +58,7 @@ function validateEvent(event: AndroidEvent, index: number): string | null {
   if (!event.user_hash || !HEX_64_RE.test(event.user_hash)) return `events[${index}].user_hash must be SHA-256.`;
   if (!event.session_id || !UUID_RE.test(event.session_id)) return `events[${index}].session_id is invalid.`;
   if (event.platform !== "android") return `events[${index}].platform must be android.`;
-  if (!event.app_version || event.app_version.length > 32) return `events[${index}].app_version is invalid.`;
+  if (!event.app_version || !/^[0-9A-Za-z.+_-]{1,32}$/.test(event.app_version)) return `events[${index}].app_version is invalid.`;
   if (event.consent_status !== "granted") return `events[${index}] requires granted consent.`;
   if (event.consent_version !== undefined &&
       (typeof event.consent_version !== "string" || !/^[a-zA-Z0-9._-]{1,32}$/.test(event.consent_version))) {
@@ -75,7 +78,7 @@ function validateEvent(event: AndroidEvent, index: number): string | null {
   }
 
   const timestamp = Date.parse(event.timestamp_utc);
-  if (!Number.isFinite(timestamp) || Math.abs(timestamp - Date.now()) > MAX_CLOCK_SKEW_MS) {
+  if (!Number.isFinite(timestamp) || Date.now() - timestamp > MAX_CLOCK_SKEW_MS) {
     return `events[${index}].timestamp_utc is invalid or outside the allowed clock window.`;
   }
 
@@ -83,8 +86,14 @@ function validateEvent(event: AndroidEvent, index: number): string | null {
     if (!event.properties || typeof event.properties !== "object" || Array.isArray(event.properties)) {
       return `events[${index}].properties must be an object.`;
     }
-    if (containsForbiddenProperty(event.properties)) {
-      return `events[${index}].properties contains a forbidden personal or secret field.`;
+    for (const [key, value] of Object.entries(event.properties)) {
+      if (!LIVE_PROPERTY_KEYS.has(key)) return `events[${index}].properties contains an unsupported key.`;
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+        return `events[${index}].properties values must be scalar.`;
+      }
+      if (typeof value === "string" && value.length > MAX_SCALAR_PROPERTY_LENGTH) {
+        return `events[${index}].properties value is too long.`;
+      }
     }
     const serializedProperties = JSON.stringify(event.properties);
     if (serializedProperties.length > MAX_EVENT_BYTES) {
@@ -103,13 +112,13 @@ const digest = async (value: string): Promise<string> => {
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
-const containsForbiddenProperty = (value: unknown, depth = 0): boolean => {
-  if (depth > 4 || value === null || typeof value !== "object") return depth > 4;
-  if (Array.isArray(value)) return value.some((item) => containsForbiddenProperty(item, depth + 1));
-
-  return Object.entries(value).some(([key, nestedValue]) =>
-    FORBIDDEN_PROPERTY_KEY_RE.test(key) || containsForbiddenProperty(nestedValue, depth + 1)
-  );
+const constantTimeEqual = (left: string, right: string): boolean => {
+  const size = Math.max(left.length, right.length);
+  let difference = left.length ^ right.length;
+  for (let index = 0; index < size; index += 1) {
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  }
+  return difference === 0;
 };
 
 const consumeRateLimit = async (
@@ -135,7 +144,7 @@ const consumeRateLimit = async (
 
 const recordMetric = async (
   kv: KVNamespace | undefined,
-  metric: "accepted" | "rejected" | "unauthorized" | "rate_limited" | "duplicates"
+  metric: "accepted" | "rejected" | "unauthorized" | "unauthorized_missing_token" | "unauthorized_unknown_token" | "rate_limited" | "quota" | "future_timestamp" | "rollup_failed" | "duplicates"
 ) => {
   if (!kv) return;
   try {
@@ -153,14 +162,18 @@ const recordMetric = async (
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     if (!env.ANALYTICS_APP_TOKEN) {
+      await recordMetric(env.ANALYTICS_KV, "unauthorized_missing_token");
       return json({ error: "Analytics app ingestion is not configured." }, { status: 503 });
     }
     if (!request.headers.get("Content-Type")?.toLowerCase().includes("application/json")) {
       await recordMetric(env.ANALYTICS_KV, "rejected");
       return json({ error: "Content-Type must be application/json." }, { status: 415 });
     }
-    if (request.headers.get("X-Analytics-App-Token") !== env.ANALYTICS_APP_TOKEN) {
-      await recordMetric(env.ANALYTICS_KV, "unauthorized");
+    const suppliedToken = request.headers.get("X-Analytics-App-Token") || "";
+    const tokenAccepted = constantTimeEqual(suppliedToken, env.ANALYTICS_APP_TOKEN)
+      || Boolean(env.ANALYTICS_APP_TOKEN_PREVIOUS && constantTimeEqual(suppliedToken, env.ANALYTICS_APP_TOKEN_PREVIOUS));
+    if (!tokenAccepted) {
+      await recordMetric(env.ANALYTICS_KV, "unauthorized_unknown_token");
       return json({ error: "Unauthorized analytics client." }, { status: 401 });
     }
 
@@ -170,7 +183,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return json({ error: "Analytics request body is too large." }, { status: 413 });
     }
 
-    const tokenKey = await digest(env.ANALYTICS_APP_TOKEN);
+    const tokenKey = await digest(suppliedToken);
     const ipKey = await digest(getClientIp(request));
     const [ipLimit, tokenLimit] = await Promise.all([
       consumeRateLimit(env.ANALYTICS_KV, `ip:${ipKey}`, RATE_LIMIT_PER_IP),
@@ -213,6 +226,25 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     const receivedAt = new Date().toISOString();
+    const maxInstallEvents = Number.parseInt(env.ANALYTICS_MAX_EVENTS_PER_INSTALL_HOUR || "", 10) || MAX_INSTALL_EVENTS_PER_HOUR;
+    const installHashes = [...new Set(body.events.map((event) => event.user_hash))];
+    for (const installHash of installHashes) {
+      const quotaStatement = env.DB.prepare(`
+        SELECT window_start, window_events FROM android_live_presence WHERE user_hash = ?
+      `).bind(installHash);
+      const existing = typeof (quotaStatement as D1PreparedStatement & { first?: unknown }).first === "function"
+        ? await quotaStatement.first<{ window_start: string; window_events: number }>()
+        : null;
+      const withinWindow = existing && Date.parse(existing.window_start) >= Date.now() - 3_600_000;
+      const incoming = body.events.filter((event) => event.user_hash === installHash).length;
+      if (withinWindow && Number(existing?.window_events || 0) + incoming > maxInstallEvents) {
+        await recordMetric(env.ANALYTICS_KV, "quota");
+        return json({ error: "Analytics install event quota exceeded." }, {
+          status: 429,
+          headers: { "Retry-After": "3600" }
+        });
+      }
+    }
     const statements = body.events.map((event) => env.DB.prepare(`
       INSERT OR IGNORE INTO android_analytics_events (
         schema_version, event_id, event_name, user_hash, session_id, timestamp_utc, platform,
@@ -242,6 +274,64 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     const results = await env.DB.batch(statements);
     const accepted = results.reduce((count, result) => count + (result.meta?.changes || 0), 0);
+    const insertedEvents = body.events.filter((_event, index) => (results[index]?.meta?.changes || 0) > 0);
+    try {
+      const minuteCounts = new Map<string, number>();
+      for (const event of insertedEvents) {
+        if (Date.parse(event.timestamp_utc) - Date.now() > FUTURE_EVENT_TOLERANCE_MS) {
+          await recordMetric(env.ANALYTICS_KV, "future_timestamp");
+          continue;
+        }
+        const minute = new Date(event.timestamp_utc).toISOString().slice(0, 16);
+        const key = `${minute}\u0000${event.event_name}`;
+        minuteCounts.set(key, (minuteCounts.get(key) || 0) + 1);
+      }
+      const rollupStatements = [...minuteCounts.entries()].map(([key, count]) => {
+        const [minute, eventName] = key.split("\u0000");
+        return env.DB.prepare(`
+          INSERT INTO android_live_minute (minute_utc, event_name, event_count)
+          VALUES (?, ?, ?)
+          ON CONFLICT(minute_utc, event_name) DO UPDATE SET event_count = event_count + excluded.event_count
+        `).bind(minute, eventName, count);
+      });
+      for (const hash of installHashes) {
+        const installEvents = insertedEvents.filter((event) => event.user_hash === hash);
+        if (!installEvents.length) continue;
+        const first = installEvents[0];
+        const existing = await env.DB.prepare("SELECT first_seen_at, window_start, window_events FROM android_live_presence WHERE user_hash = ?").bind(hash).first<{ first_seen_at: string; window_start: string; window_events: number }>();
+        const currentWindow = existing && Date.parse(existing.window_start) >= Date.now() - 3_600_000;
+        rollupStatements.push(env.DB.prepare(`
+          INSERT INTO android_live_presence (user_hash, first_seen_at, last_seen_at, app_version, window_start, window_events)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(user_hash) DO UPDATE SET
+            last_seen_at = excluded.last_seen_at,
+            app_version = excluded.app_version,
+            window_start = excluded.window_start,
+            window_events = excluded.window_events
+        `).bind(
+          hash,
+          existing?.first_seen_at || receivedAt,
+          receivedAt,
+          first.app_version,
+          currentWindow ? existing?.window_start : receivedAt,
+          (currentWindow ? Number(existing?.window_events || 0) : 0) + installEvents.length
+        ));
+      }
+      for (let index = 0; index < rollupStatements.length; index += 50) {
+        await env.DB.batch(rollupStatements.slice(index, index + 50));
+      }
+    } catch (error) {
+      await recordMetric(env.ANALYTICS_KV, "rollup_failed");
+      try {
+        await env.DB.prepare(`
+          INSERT INTO android_pipeline_health (component, last_error_at, last_error, detail)
+          VALUES ('ingest_rollup', ?, ?, ?)
+          ON CONFLICT(component) DO UPDATE SET last_error_at = excluded.last_error_at, last_error = excluded.last_error, detail = excluded.detail
+        `).bind(receivedAt, error instanceof Error ? error.message : "rollup failed", "rollup failure did not reject ingestion").run();
+      } catch {
+        // Health reporting must not alter the accepted upload response.
+      }
+    }
     await recordMetric(env.ANALYTICS_KV, "accepted");
     if (accepted < body.events.length) {
       await recordMetric(env.ANALYTICS_KV, "duplicates");

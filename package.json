@@ -9,7 +9,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "docs:sync": "node scripts/sync-project-structure.cjs",
     "docs:watch": "node scripts/watch-project.cjs",
-    "test:analytics": "vitest run tests/analytics.test.ts"
+    "test:analytics": "vitest run tests/analytics.test.ts",
+    "simulate:analytics": "tsx scripts/simulate-analytics-load.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
@@ -22,6 +23,7 @@
     "@cloudflare/workers-types": "^4.20241218.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.0",
     "vitest": "^5.0.5"
   }

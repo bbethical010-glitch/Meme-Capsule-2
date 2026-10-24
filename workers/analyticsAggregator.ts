@@ -67,8 +67,8 @@ const refreshAndroidDailySummary = async (env: Env): Promise<number> => {
   const now = new Date().toISOString();
   await env.DB.prepare(`
     DELETE FROM android_analytics_daily_summary
-    WHERE summary_date >= date('now', ?)
-  `).bind(`-${ANDROID_SUMMARY_DAYS} days`).run();
+    WHERE summary_date IN (date('now'), date('now', '-1 day'))
+  `).run();
 
   const { results } = await env.DB.prepare(`
     SELECT
@@ -85,7 +85,7 @@ const refreshAndroidDailySummary = async (env: Env): Promise<number> => {
       SUM(CASE WHEN event_name = 'meme_share' THEN 1 ELSE 0 END) AS shares,
       SUM(CASE WHEN event_name = 'meme_save' THEN 1 ELSE 0 END) AS saves
     FROM android_analytics_events
-    WHERE timestamp_utc >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
+    WHERE substr(COALESCE(received_at, timestamp_utc), 1, 10) IN (date('now'), date('now', '-1 day'))
     GROUP BY summary_date, platform, event_name, category, app_version
   `).bind(`-${ANDROID_SUMMARY_DAYS} days`).all<Record<string, string | number>>();
 
@@ -104,6 +104,31 @@ const refreshAndroidDailySummary = async (env: Env): Promise<number> => {
     await env.DB.batch(statements.slice(index, index + BATCH_WRITE_SIZE));
   }
   return results.length;
+};
+
+const refreshLiveHourly = async (env: Env): Promise<number> => {
+  const rows = await env.DB.prepare(`
+    SELECT substr(minute_utc, 1, 13) || ':00' AS hour_utc, event_name, SUM(event_count) AS event_count
+    FROM android_live_minute
+    WHERE minute_utc >= strftime('%Y-%m-%dT%H:%M', 'now', '-48 hours')
+      AND minute_utc < strftime('%Y-%m-%dT%H:00', 'now')
+    GROUP BY hour_utc, event_name
+  `).all<{ hour_utc: string; event_name: string; event_count: number }>();
+  const statements = (rows.results || []).map((row) => env.DB.prepare(`
+    INSERT INTO android_live_hourly (hour_utc, event_name, event_count) VALUES (?, ?, ?)
+    ON CONFLICT(hour_utc, event_name) DO UPDATE SET event_count = excluded.event_count
+  `).bind(row.hour_utc, row.event_name, row.event_count));
+  for (let index = 0; index < statements.length; index += 50) await env.DB.batch(statements.slice(index, index + 50));
+  return statements.length;
+};
+
+const purgeLiveTables = async (env: Env): Promise<number> => {
+  const results = await Promise.all([
+    env.DB.prepare("DELETE FROM android_live_minute WHERE minute_utc < strftime('%Y-%m-%dT%H:%M', 'now', '-48 hours')").run(),
+    env.DB.prepare("DELETE FROM android_live_hourly WHERE hour_utc < strftime('%Y-%m-%dT%H:00', 'now', '-35 days')").run(),
+    env.DB.prepare("DELETE FROM android_live_presence WHERE last_seen_at < datetime('now', '-48 hours')").run()
+  ]);
+  return results.reduce((sum, result) => sum + (result.meta?.changes || 0), 0);
 };
 
 interface AggRow {
@@ -410,8 +435,15 @@ export default {
     const start = Date.now();
 
     try {
-      const purged = await purgeExpiredAndroidEvents(env);
       const result = await runAggregation(env);
+      const hourly = await refreshLiveHourly(env);
+      const purged = await purgeExpiredAndroidEvents(env);
+      const livePurged = await purgeLiveTables(env);
+      await env.DB.prepare(`
+        INSERT INTO android_pipeline_health (component, last_ok_at, last_error_at, last_error, detail)
+        VALUES ('worker', ?, NULL, NULL, ?)
+        ON CONFLICT(component) DO UPDATE SET last_ok_at = excluded.last_ok_at, last_error_at = NULL, last_error = NULL, detail = excluded.detail
+      `).bind(new Date().toISOString(), `summary_rows=${result.androidSummaryRows}; hourly_rows=${hourly}; purged=${purged + livePurged}`).run();
       const duration = Date.now() - start;
       console.log(
         `Analytics aggregation complete: ${result.processed} memes processed, ${result.seeded} seeded from legacy, ${result.androidSummaryRows} Android summary rows refreshed, ${purged} Android events purged. Duration: ${duration}ms`
@@ -438,14 +470,22 @@ export default {
     }
 
     try {
-      const purged = await purgeExpiredAndroidEvents(env);
       const result = await runAggregation(env);
+      const hourly = await refreshLiveHourly(env);
+      const purged = await purgeExpiredAndroidEvents(env);
+      const livePurged = await purgeLiveTables(env);
+      await env.DB.prepare(`
+        INSERT INTO android_pipeline_health (component, last_ok_at, last_error_at, last_error, detail)
+        VALUES ('worker', ?, NULL, NULL, ?)
+        ON CONFLICT(component) DO UPDATE SET last_ok_at = excluded.last_ok_at, last_error_at = NULL, last_error = NULL, detail = excluded.detail
+      `).bind(new Date().toISOString(), `summary_rows=${result.androidSummaryRows}; hourly_rows=${hourly}; purged=${purged + livePurged}`).run();
       return new Response(JSON.stringify({
         success: true,
         processed: result.processed,
         seeded: result.seeded,
         android_summary_rows: result.androidSummaryRows,
         android_events_purged: purged,
+        live_rows_purged: livePurged,
         timestamp: new Date().toISOString()
       }), {
         headers: { "Content-Type": "application/json" }
