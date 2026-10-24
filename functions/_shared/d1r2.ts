@@ -8,6 +8,8 @@ export type Env = {
   R2_PUBLIC_URL?: string;
   ANALYTICS_KV?: KVNamespace;
   ANALYTICS_APP_TOKEN?: string;
+  ANALYTICS_APP_TOKEN_PREVIOUS?: string;
+  ANALYTICS_MAX_EVENTS_PER_INSTALL_HOUR?: string;
 };
 
 export interface CatUser {

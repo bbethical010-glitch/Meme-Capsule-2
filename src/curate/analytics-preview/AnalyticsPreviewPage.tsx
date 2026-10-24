@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-type TabKey = "Overview" | "Audience" | "Content" | "AI";
+type TabKey = "LIVE" | "Overview" | "Audience" | "Content" | "AI";
 type RangeKey = "7d" | "30d" | "90d";
 type PlatformKey = "All" | "Android" | "Web";
 
@@ -98,7 +98,7 @@ function InfoTile({ label, value, accent }: { label: string; value: string; acce
 }
 
 export default function AnalyticsPreviewPage() {
-  const [activeTab, setActiveTab] = useState<TabKey>("Overview");
+  const [activeTab, setActiveTab] = useState<TabKey>("LIVE");
   const [range, setRange] = useState<RangeKey>("30d");
   const [platform, setPlatform] = useState<PlatformKey>("All");
   const [liveOverview, setLiveOverview] = useState<{
@@ -121,6 +121,11 @@ export default function AnalyticsPreviewPage() {
   const [analyticsError, setAnalyticsError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+  const [liveSummary, setLiveSummary] = useState<{ active_now: number; active_30m: number; events_5m: number; events_prev_5m: number; last_event_at: string | null; today: { events: number; active_users: number }; per_minute: Array<{ minute: string; count: number }>; pipeline: { status: string } } | null>(null);
+  const [liveFeed, setLiveFeed] = useState<Array<{ id: number; event_name: string; group: string; received_at: string; app_version: string }>>([]);
+  const [liveInsights, setLiveInsights] = useState<Array<{ title: string; message: string; severity: string }>>([]);
+  const [liveStatus, setLiveStatus] = useState("RECONNECTING");
+  const [autoRefresh, setAutoRefresh] = useState(() => localStorage.getItem("analytics_auto_refresh") || "10");
 
   useEffect(() => {
     document.title = "Meme Capsule Analytics Preview";
@@ -141,7 +146,7 @@ export default function AnalyticsPreviewPage() {
     const loadAnalytics = async () => {
       if (!liveOverview) setIsLoading(true);
       try {
-        const headers = { Authorization: `Bearer ${token}` };
+        const headers = { Authorization: "Bearer " + token };
         const responses = await Promise.all([
           fetch(`/api/analytics/overview?days=${days}${platformQuery}`, { headers, cache: "no-store" }),
           fetch(`/api/analytics/trends?days=${days}`, { headers, cache: "no-store" }),
@@ -195,6 +200,37 @@ export default function AnalyticsPreviewPage() {
     };
   }, [platform, range]);
 
+  useEffect(() => {
+    if (activeTab !== "LIVE" || autoRefresh === "OFF") return;
+    let cancelled = false;
+    const loadLive = async () => {
+      const token = sessionStorage.getItem("curator_token");
+      if (!token) { setLiveStatus("SESSION EXPIRED"); return; }
+      try {
+        const headers = { Authorization: "Bearer " + token };
+        const responses = await Promise.all([
+          fetch("/api/analytics/live/summary?fresh=1", { headers, cache: "no-store" }),
+          fetch("/api/analytics/live/feed", { headers, cache: "no-store" }),
+          fetch("/api/analytics/live/insights", { headers, cache: "no-store" })
+        ]);
+        if (responses.some((response) => response.status === 401)) { setLiveStatus("SESSION EXPIRED"); return; }
+        if (responses.some((response) => !response.ok)) throw new Error("Live analytics request failed.");
+        const summary = await responses[0].json() as typeof liveSummary;
+        const feed = await responses[1].json() as { items?: typeof liveFeed };
+        const insights = await responses[2].json() as { insights?: typeof liveInsights };
+        if (!cancelled) {
+          setLiveSummary(summary);
+          setLiveFeed(feed.items || []);
+          setLiveInsights(insights.insights || []);
+          setLiveStatus("LIVE");
+        }
+      } catch { if (!cancelled) setLiveStatus("RECONNECTING"); }
+    };
+    void loadLive();
+    const timer = window.setInterval(() => void loadLive(), Math.max(5, Number(autoRefresh) || 10) * 1000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [activeTab, autoRefresh]);
+
   const kpis = useMemo(() => {
     const metrics = liveOverview?.kpis;
     if (!metrics) return [];
@@ -233,7 +269,7 @@ export default function AnalyticsPreviewPage() {
           </div>
 
           <nav style={{ display: "grid", gap: 8 }}>
-            {(["Overview", "Audience", "Content", "AI"] as TabKey[]).map((tab) => (
+            {(["LIVE", "Overview", "Audience", "Content", "AI"] as TabKey[]).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -339,6 +375,37 @@ export default function AnalyticsPreviewPage() {
                 ? kpis.map((item) => <MetricCard key={item.label} item={item} />)
                 : <div style={{ gridColumn: "1 / -1" }}><EmptyState message="No Android events are available for this range." /></div>}
           </div>
+
+          {activeTab === "LIVE" && (
+            <div style={{ display: "grid", gap: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: liveStatus === "LIVE" ? "#7cdb8d" : "#f4c300", fontWeight: 800 }}>{liveStatus}</span>
+                <select value={autoRefresh} onChange={(event) => { setAutoRefresh(event.target.value); localStorage.setItem("analytics_auto_refresh", event.target.value); }} style={{ background: "#181818", color: "#fff", padding: 8 }}>
+                  <option value="OFF">AUTO OFF</option><option value="10">AUTO 10s</option><option value="30">AUTO 30s</option><option value="60">AUTO 60s</option>
+                </select>
+              </div>
+              {liveStatus === "SESSION EXPIRED" ? <EmptyState message="SESSION EXPIRED — sign in again to view live analytics." /> : liveSummary ? (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+                    <InfoTile label="Active now" value={String(liveSummary.active_now)} accent="#6ee7ff" />
+                    <InfoTile label="Active 30m" value={String(liveSummary.active_30m)} accent="#34C759" />
+                    <InfoTile label="Events / 5m" value={String(liveSummary.events_5m)} accent="#f4c300" />
+                    <InfoTile label="Today events" value={String(liveSummary.today.events)} accent="#FF7A59" />
+                    <InfoTile label="Today users" value={String(liveSummary.today.active_users)} accent="#9b30ff" />
+                  </div>
+                  <div style={{ background: "#151515", padding: 16 }}>
+                    <h3 style={{ marginTop: 0 }}>EVENTS PER MINUTE</h3>
+                    <TrendChart values={liveSummary.per_minute.map((item) => Number(item.count))} />
+                  </div>
+                  <div style={{ background: "#151515", padding: 16 }}>
+                    <h3 style={{ marginTop: 0 }}>LIVE FEED</h3>
+                    {liveFeed.length ? liveFeed.map((item) => <div key={item.id} style={{ padding: "8px 0", borderBottom: "1px solid #2d2d2d", fontSize: 12 }}><b>{item.event_name}</b> · {item.group} · {item.app_version} · {item.received_at}</div>) : <EmptyState message="NO EVENTS YET" />}
+                  </div>
+                  {liveInsights.map((item) => <div key={item.title} style={{ border: "1px solid #f4c300", padding: 12 }}><b>{item.severity.toUpperCase()}: {item.title}</b><div>{item.message}</div></div>)}
+                </>
+              ) : <EmptyState message="NO EVENTS YET" />}
+            </div>
+          )}
 
           {activeTab === "Overview" && (
             <>
