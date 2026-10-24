@@ -6,3 +6,6 @@ ADMIN_API_TOKEN="MEME@67"
 
 # Used by the frontend AdminGate to restrict access to the dashboard
 VITE_ADMIN_PIN="123456"
+
+# Required by POST /api/analytics/events for Android telemetry ingestion
+ANALYTICS_APP_TOKEN="replace-with-a-rotated-app-token"

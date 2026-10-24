@@ -142,6 +142,25 @@ export default function CurateSuperDashboard({
 
           <button
             type="button"
+            onClick={() => {
+              window.location.hash = "#/curate/analytics";
+              window.dispatchEvent(new PopStateEvent("popstate"));
+            }}
+            style={{
+              background: "#f4c300",
+              color: "#111111",
+              border: "1px solid #f4c300",
+              padding: "6px 14px",
+              fontFamily: "Anton",
+              fontSize: "12px",
+              cursor: "pointer"
+            }}
+          >
+            📊 AI ANALYTICS
+          </button>
+
+          <button
+            type="button"
             onClick={onSwitchToJudgeMode}
             style={{
               background: "#9b30ff",
