@@ -36,7 +36,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         props: parseProperties(String(row.properties_json || "{}"))
       })),
       has_more: raw.length > limited.length,
-      cursor: limited.length ? Number(limited[limited.length - 1].id) : cursor ? Number(cursor) : null
+      cursor: limited.length ? Number(cursor ? limited[limited.length - 1].id : limited[0].id) : cursor ? Number(cursor) : null
     }, { headers: noStore() });
   } catch (error) {
     if (error instanceof Response) return error;

@@ -1,14 +1,15 @@
 import type { PagesFunction } from "../../_shared/pages";
 import { json, type Env } from "../../_shared/d1r2";
-import { requireAuth } from "../../_shared/catAuth";
+import { requireSuperadmin, noStore } from "../../_shared/liveAnalytics";
 import { androidAnalyticsCacheKey, ANDROID_ANALYTICS_TTL, getCached, setCache } from "../../_shared/analyticsCache";
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
-    await requireAuth(request, env);
+    await requireSuperadmin(request, env);
+    const fresh = new URL(request.url).searchParams.get("fresh") === "1";
     const cacheKey = androidAnalyticsCacheKey("retention");
-    const cached = env.ANALYTICS_KV ? await getCached<Record<string, unknown>>(env.ANALYTICS_KV, cacheKey) : null;
-    if (cached) return json(cached);
+    const cached = !fresh && env.ANALYTICS_KV ? await getCached<Record<string, unknown>>(env.ANALYTICS_KV, cacheKey) : null;
+    if (cached) return json(cached, { headers: noStore() });
     const { results } = await env.DB.prepare(`
       WITH first_seen AS (
         SELECT user_hash, MIN(substr(timestamp_utc, 1, 10)) AS cohort_date
@@ -55,10 +56,10 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       })
     };
     if (env.ANALYTICS_KV) await setCache(env.ANALYTICS_KV, cacheKey, response, ANDROID_ANALYTICS_TTL);
-    return json(response);
+    return json(response, { headers: noStore() });
   } catch (error) {
     if (error instanceof Response) return error;
     console.error("Android retention error:", error instanceof Error ? error.message : error);
-    return json({ error: "Analytics retention unavailable." }, { status: 500 });
+    return json({ error: "Analytics retention unavailable." }, { status: 500, headers: noStore() });
   }
 };

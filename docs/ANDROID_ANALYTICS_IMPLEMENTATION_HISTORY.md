@@ -266,3 +266,17 @@ If the dashboard is empty:
 - **Cloudflare account:** Pages secrets, D1 migration execution, Worker
   deployment, KV/R2 bindings, cron, and production verification.
 
+## Real-time LIVE analytics completion
+
+The real-time extension is implemented additively in migration 021. Ingestion records
+server receive time, performs non-blocking minute and presence rollups, enforces a
+per-install rolling-hour quota, supports current/previous token rotation, and validates
+allowlisted scalar properties. The Worker refreshes today and yesterday before retention
+purges, materializes completed hourly buckets, expires live data, and records pipeline
+heartbeats.
+
+The SuperAdmin dashboard now has LIVE summary, cursor-based feed, deterministic insights,
+health and rebuild endpoints. Existing analytics readers authenticate before KV reads,
+support `fresh=1`, return `Cache-Control: no-store`, and are restricted to SuperAdmin.
+The dashboard supports manual refresh, keyboard `R`, configurable polling, hidden-tab
+pausing, visibility refresh, and explicit session-expired/reconnecting states.
