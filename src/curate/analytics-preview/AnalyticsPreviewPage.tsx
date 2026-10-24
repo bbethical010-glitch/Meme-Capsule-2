@@ -123,9 +123,18 @@ export default function AnalyticsPreviewPage() {
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
   const [liveSummary, setLiveSummary] = useState<{ active_now: number; active_30m: number; events_5m: number; events_prev_5m: number; last_event_at: string | null; today: { events: number; active_users: number }; per_minute: Array<{ minute: string; count: number }>; pipeline: { status: string } } | null>(null);
   const [liveFeed, setLiveFeed] = useState<Array<{ id: number; event_name: string; group: string; received_at: string; app_version: string }>>([]);
+  const [liveCursor, setLiveCursor] = useState<number | null>(null);
+  const [liveFeedPaused, setLiveFeedPaused] = useState(false);
+  const [liveGroupFilter, setLiveGroupFilter] = useState("all");
   const [liveInsights, setLiveInsights] = useState<Array<{ title: string; message: string; severity: string }>>([]);
   const [liveStatus, setLiveStatus] = useState("RECONNECTING");
+  const [liveRetryDelay, setLiveRetryDelay] = useState(5000);
   const [autoRefresh, setAutoRefresh] = useState(() => localStorage.getItem("analytics_auto_refresh") || "10");
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshCooldown, setRefreshCooldown] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [updatedAgo, setUpdatedAgo] = useState(0);
 
   useEffect(() => {
     document.title = "Meme Capsule Analytics Preview";
@@ -133,6 +142,7 @@ export default function AnalyticsPreviewPage() {
 
   useEffect(() => {
     let cancelled = false;
+    if (activeTab === "LIVE") return;
     const token = sessionStorage.getItem("curator_token");
     const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
     const platformQuery = platform === "Android" ? "&platform=android" : "";
@@ -148,13 +158,13 @@ export default function AnalyticsPreviewPage() {
       try {
         const headers = { Authorization: "Bearer " + token };
         const responses = await Promise.all([
-          fetch(`/api/analytics/overview?days=${days}${platformQuery}`, { headers, cache: "no-store" }),
-          fetch(`/api/analytics/trends?days=${days}`, { headers, cache: "no-store" }),
-          fetch("/api/analytics/audience", { headers, cache: "no-store" }),
-          fetch("/api/analytics/content", { headers, cache: "no-store" }),
-          fetch("/api/analytics/retention", { headers, cache: "no-store" }),
-          fetch("/api/analytics/funnel", { headers, cache: "no-store" }),
-          fetch("/api/analytics/ai-insights", { headers, cache: "no-store" })
+          fetch(`/api/analytics/overview?days=${days}${platformQuery}&fresh=${refreshNonce ? "1" : "0"}`, { headers, cache: "no-store" }),
+          fetch(`/api/analytics/trends?days=${days}&fresh=${refreshNonce ? "1" : "0"}`, { headers, cache: "no-store" }),
+          fetch(`/api/analytics/audience?fresh=${refreshNonce ? "1" : "0"}`, { headers, cache: "no-store" }),
+          fetch(`/api/analytics/content?fresh=${refreshNonce ? "1" : "0"}`, { headers, cache: "no-store" }),
+          fetch(`/api/analytics/retention?fresh=${refreshNonce ? "1" : "0"}`, { headers, cache: "no-store" }),
+          fetch(`/api/analytics/funnel?fresh=${refreshNonce ? "1" : "0"}`, { headers, cache: "no-store" }),
+          fetch(`/api/analytics/ai-insights?fresh=${refreshNonce ? "1" : "0"}`, { headers, cache: "no-store" })
         ]);
         const [overviewResponse, trendResponse, audienceResponse, contentResponse, retentionResponse, funnelResponse, insightsResponse] = responses;
         const overview = await overviewResponse.json() as typeof liveOverview;
@@ -182,9 +192,12 @@ export default function AnalyticsPreviewPage() {
           });
           setAnalyticsError("");
           setLastRefreshAt(new Date().toISOString());
+          setLastUpdatedAt(Date.now());
+          setIsRefreshing(false);
           setIsLoading(false);
         }
       } catch (error) {
+        setIsRefreshing(false);
         if (!cancelled) {
           setAnalyticsError(error instanceof Error ? error.message : "Live analytics unavailable.");
           setIsLoading(false);
@@ -193,12 +206,19 @@ export default function AnalyticsPreviewPage() {
     };
 
     loadAnalytics();
-    const refreshTimer = window.setInterval(loadAnalytics, 30000);
+    const refreshTimer = autoRefresh === "OFF" ? 0 : window.setInterval(() => {
+      if (!document.hidden) void loadAnalytics();
+    }, Math.max(5, Number(autoRefresh) || 30) * 1000);
+    const onVisibilityChange = () => {
+      if (!document.hidden) void loadAnalytics();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
-      window.clearInterval(refreshTimer);
+      if (refreshTimer) window.clearInterval(refreshTimer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [platform, range]);
+  }, [activeTab, autoRefresh, platform, range, refreshNonce]);
 
   useEffect(() => {
     if (activeTab !== "LIVE" || autoRefresh === "OFF") return;
@@ -210,7 +230,7 @@ export default function AnalyticsPreviewPage() {
         const headers = { Authorization: "Bearer " + token };
         const responses = await Promise.all([
           fetch("/api/analytics/live/summary?fresh=1", { headers, cache: "no-store" }),
-          fetch("/api/analytics/live/feed", { headers, cache: "no-store" }),
+          fetch(`/api/analytics/live/feed${liveCursor ? `?cursor=${liveCursor}` : ""}`, { headers, cache: "no-store" }),
           fetch("/api/analytics/live/insights", { headers, cache: "no-store" })
         ]);
         if (responses.some((response) => response.status === 401)) { setLiveStatus("SESSION EXPIRED"); return; }
@@ -220,16 +240,64 @@ export default function AnalyticsPreviewPage() {
         const insights = await responses[2].json() as { insights?: typeof liveInsights };
         if (!cancelled) {
           setLiveSummary(summary);
-          setLiveFeed(feed.items || []);
+          if ((feed as { reset?: boolean }).reset) setLiveCursor(null);
+          if (!liveFeedPaused && !(feed as { reset?: boolean }).reset) setLiveFeed((current) => {
+            const incoming = feed.items || [];
+            const merged = [...incoming, ...current].filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
+            return merged.sort((left, right) => right.id - left.id).slice(0, 200);
+          });
+          if (typeof (feed as { cursor?: number }).cursor === "number") setLiveCursor((feed as { cursor: number }).cursor);
           setLiveInsights(insights.insights || []);
           setLiveStatus("LIVE");
+          setLiveRetryDelay(5000);
+          setLastUpdatedAt(Date.now());
+          setIsRefreshing(false);
         }
-      } catch { if (!cancelled) setLiveStatus("RECONNECTING"); }
+      } catch {
+        if (!cancelled) {
+          setLiveStatus("RECONNECTING");
+          setLiveRetryDelay((delay) => Math.min(60000, delay * 2));
+          setIsRefreshing(false);
+        }
+      }
     };
     void loadLive();
-    const timer = window.setInterval(() => void loadLive(), Math.max(5, Number(autoRefresh) || 10) * 1000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [activeTab, autoRefresh]);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadLive();
+    }, liveStatus === "RECONNECTING" ? liveRetryDelay : Math.max(5, Number(autoRefresh) || 10) * 1000);
+    const onVisibilityChange = () => {
+      if (!document.hidden) void loadLive();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [activeTab, autoRefresh, liveCursor, liveFeedPaused, liveRetryDelay, liveStatus, refreshNonce]);
+
+  useEffect(() => {
+    if (!lastUpdatedAt) return;
+    const update = () => setUpdatedAgo(Math.max(0, Math.floor((Date.now() - lastUpdatedAt) / 1000)));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [lastUpdatedAt]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (event.key.toLowerCase() === "r" && target.tagName !== "INPUT" && target.tagName !== "TEXTAREA" && target.tagName !== "SELECT") {
+        event.preventDefault();
+        setIsRefreshing(true);
+        setRefreshCooldown(true);
+        window.setTimeout(() => setRefreshCooldown(false), 3000);
+        setRefreshNonce((value) => value + 1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const kpis = useMemo(() => {
     const metrics = liveOverview?.kpis;
@@ -310,6 +378,20 @@ export default function AnalyticsPreviewPage() {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={isRefreshing || refreshCooldown}
+                onClick={() => {
+                  setIsRefreshing(true);
+                  setRefreshCooldown(true);
+                  window.setTimeout(() => setRefreshCooldown(false), 3000);
+                  setRefreshNonce((value) => value + 1);
+                }}
+                style={{ background: isRefreshing || refreshCooldown ? "#555" : "#34C759", border: "2px solid #000", color: "#111", padding: "10px 14px", fontWeight: 900, cursor: isRefreshing ? "wait" : "pointer", boxShadow: "4px 4px 0 #000" }}
+              >
+                {isRefreshing ? "REFRESHING..." : "REFRESH"}
+              </button>
+              <span style={{ fontSize: 11, color: "#aaa" }}>{lastUpdatedAt ? `UPDATED ${updatedAgo}s AGO` : "NOT UPDATED"}</span>
               <div style={{ display: "flex", gap: 8, background: "#171717", border: "1px solid #2f2f2f", padding: "6px" }}>
                 {filters.rangeOptions.map((option) => (
                   <button
@@ -355,6 +437,12 @@ export default function AnalyticsPreviewPage() {
                   </button>
                 ))}
               </div>
+              <select value={autoRefresh} onChange={(event) => { setAutoRefresh(event.target.value); localStorage.setItem("analytics_auto_refresh", event.target.value); }} aria-label="Auto refresh interval" style={{ background: "#181818", color: "#fff", border: "1px solid #555", padding: "9px" }}>
+                <option value="OFF">AUTO OFF</option>
+                <option value="10">AUTO 10s</option>
+                <option value="30">AUTO 30s</option>
+                <option value="60">AUTO 60s</option>
+              </select>
 
               <button type="button" onClick={() => { window.history.pushState({}, "", "/curate"); window.dispatchEvent(new PopStateEvent("popstate")); }} style={{ background: "#111", border: "2px solid #fff", color: "#fff", padding: "10px 16px", fontWeight: 700, cursor: "pointer", boxShadow: "4px 4px 0 #000" }}>
                 Back to curation
@@ -398,8 +486,14 @@ export default function AnalyticsPreviewPage() {
                     <TrendChart values={liveSummary.per_minute.map((item) => Number(item.count))} />
                   </div>
                   <div style={{ background: "#151515", padding: 16 }}>
-                    <h3 style={{ marginTop: 0 }}>LIVE FEED</h3>
-                    {liveFeed.length ? liveFeed.map((item) => <div key={item.id} style={{ padding: "8px 0", borderBottom: "1px solid #2d2d2d", fontSize: 12 }}><b>{item.event_name}</b> · {item.group} · {item.app_version} · {item.received_at}</div>) : <EmptyState message="NO EVENTS YET" />}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <h3 style={{ marginTop: 0 }}>LIVE FEED</h3>
+                      <button type="button" onClick={() => setLiveFeedPaused((paused) => !paused)} style={{ background: liveFeedPaused ? "#f4c300" : "#222", color: liveFeedPaused ? "#111" : "#fff", border: "1px solid #777", padding: "6px 10px", fontWeight: 800 }}>{liveFeedPaused ? "RESUME" : "PAUSE"}</button>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                      {["all", "views", "interactions", "ads", "purchases", "system"].map((group) => <button key={group} type="button" onClick={() => setLiveGroupFilter(group)} style={{ background: liveGroupFilter === group ? "#9b30ff" : "#222", color: "#fff", border: "1px solid #555", padding: "4px 8px", fontSize: 10 }}>{group}</button>)}
+                    </div>
+                    {liveFeed.filter((item) => liveGroupFilter === "all" || item.group === liveGroupFilter).length ? liveFeed.filter((item) => liveGroupFilter === "all" || item.group === liveGroupFilter).map((item) => <div key={item.id} style={{ padding: "8px 0", borderBottom: "1px solid #2d2d2d", fontSize: 12 }}><b>{item.event_name}</b> · {item.group} · {item.app_version} · {item.received_at}</div>) : <EmptyState message="NO EVENTS YET" />}
                   </div>
                   {liveInsights.map((item) => <div key={item.title} style={{ border: "1px solid #f4c300", padding: 12 }}><b>{item.severity.toUpperCase()}: {item.title}</b><div>{item.message}</div></div>)}
                 </>

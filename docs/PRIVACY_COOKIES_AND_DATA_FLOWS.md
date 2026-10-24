@@ -293,3 +293,10 @@ When submitting or updating Meme Capsule in the **Google Play Console**, use the
    - Enable `client_storage: 'none'` on `memecapsule.wtf` to completely eliminate cookie consent overhead for EU compliance.
 3. **Automate Markdown Doc Maintenance:**
    - In accordance with `AGENT_RULES.md`, coding agents must keep this document and companion architectural references synchronized whenever new third-party integrations, SDKs, or data pipelines are added.
+## Live analytics privacy coverage
+
+Live analytics exposes only aggregate counters and a feed projection containing allowlisted
+event names, groups, receive times, app versions, and up to three scalar allowlisted
+properties. It never returns user hashes, session IDs, raw property blobs, tokens, IP
+addresses, or geographic data. `android_live_presence` is covered by the verified deletion
+flow and 48-hour last-seen retention; minute and hourly rollups contain no user hashes.

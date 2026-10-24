@@ -247,3 +247,10 @@ Recommended use:
 5. Keep the Drive link as an audit/source reference, not the primary public delivery URL.
 
 Google Drive is convenient for collecting content, but R2 is better for serving content to users.
+## Migration 021: live Android analytics
+
+Migration 021 adds the receive-time index plus `android_live_minute`,
+`android_live_hourly`, `android_live_presence`, and `android_pipeline_health`. Minute
+rollups retain 48 hours, hourly rollups retain 35 days, presence retains 48 hours after
+last seen, and health rows are operational metadata. Only presence contains a user hash;
+deletion removes it through the existing verified-deletion endpoint.
