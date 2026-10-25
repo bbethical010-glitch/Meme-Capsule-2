@@ -1589,7 +1589,7 @@ export default function CurateApp() {
             </section>
           </div>
 
-          {/* 3. Mobile Quick Action Tap Buttons Bar (2-Column Enlarged: Override + Force Remove) */}
+          {/* 3. Mobile Quick Action Tap Buttons Bar (3-Column: Override + NSFW + Force Remove) */}
           {!overrideMode && currentMeme && (
             <div className="curate-mobile-quick-actions">
               <button
@@ -1598,7 +1598,20 @@ export default function CurateApp() {
                 onClick={() => setOverrideMode(true)}
               >
                 <span>✏️ MANUAL OVERRIDE</span>
-                <span style={{ fontSize: "10px", opacity: 0.8 }}>CUSTOM ATTRIBUTES</span>
+                <span style={{ fontSize: "9px", opacity: 0.8 }}>CUSTOM ATTRIBUTES</span>
+              </button>
+
+              <button
+                type="button"
+                className={`curate-mobile-action-btn curate-mobile-action-btn--nsfw ${isNsfw ? "curate-mobile-action-btn--nsfw-active" : ""}`}
+                onClick={handleToggleNsfw}
+                disabled={nsfwLoading || !currentMeme}
+                title="Flag content as 18+ NSFW (client-gated, independent of exclude)"
+              >
+                <span>{nsfwLoading ? "SAVING..." : isNsfw ? "✓ NSFW (18+)" : "🔞 TAG NSFW"}</span>
+                <span style={{ fontSize: "9px", opacity: 0.8 }}>
+                  {nsfwLoading ? "UPDATING" : isNsfw ? "FLAGGED 18+" : "FLAG 18+"}
+                </span>
               </button>
 
               <button
@@ -1608,7 +1621,7 @@ export default function CurateApp() {
                 disabled={forceRemoveLoading}
               >
                 <span>🗑️ FORCE REMOVE</span>
-                <span style={{ fontSize: "10px", opacity: 0.8 }}>DOUBLE TAP</span>
+                <span style={{ fontSize: "9px", opacity: 0.8 }}>DOUBLE TAP</span>
               </button>
             </div>
           )}

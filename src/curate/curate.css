@@ -520,11 +520,11 @@
   transform: scale(0.97);
 }
 
-/* Quick Action Tap Buttons Bar on Mobile: 2-column layout for OVERRIDE and FORCE REMOVE */
+/* Quick Action Tap Buttons Bar on Mobile: 3-column layout for OVERRIDE, NSFW, and FORCE REMOVE */
 .curate-mobile-quick-actions {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
   margin-top: 6px;
   margin-bottom: 12px;
 }
@@ -535,18 +535,19 @@
   align-items: center;
   justify-content: center;
   gap: 3px;
-  padding: 12px 8px;
+  padding: 10px 4px;
   min-height: 54px;
   background: #1c1b1b;
   border: 2px solid #444;
   color: #fff;
   font-family: 'Anton', Impact, sans-serif;
-  font-size: 14px;
+  font-size: clamp(10px, 2.8vw, 13px);
   letter-spacing: 0.5px;
   cursor: pointer;
   border-radius: 3px;
   touch-action: manipulation;
   transition: all 0.12s ease;
+  box-sizing: border-box;
 }
 
 .curate-mobile-action-btn:active {
@@ -557,6 +558,20 @@
   border-color: #f4c300;
   color: #f4c300;
   box-shadow: 2px 2px 0px rgba(244, 195, 0, 0.4);
+}
+
+.curate-mobile-action-btn--nsfw {
+  border-color: #ff6b8b;
+  color: #ff85a1;
+  box-shadow: 2px 2px 0px rgba(255, 107, 139, 0.35);
+}
+
+.curate-mobile-action-btn--nsfw.active,
+.curate-mobile-action-btn--nsfw-active {
+  background: #dd0061;
+  border-color: #ffffff;
+  color: #ffffff;
+  box-shadow: 2px 2px 0px #ffffff, 0 0 10px rgba(221, 0, 97, 0.6);
 }
 
 .curate-mobile-action-btn--remove {
