@@ -10,6 +10,9 @@ export type Env = {
   ANALYTICS_APP_TOKEN?: string;
   ANALYTICS_APP_TOKEN_PREVIOUS?: string;
   ANALYTICS_MAX_EVENTS_PER_INSTALL_HOUR?: string;
+  FIREBASE_PROJECT_ID?: string;
+  FIREBASE_CLIENT_EMAIL?: string;
+  FIREBASE_PRIVATE_KEY?: string;
 };
 
 export interface CatUser {

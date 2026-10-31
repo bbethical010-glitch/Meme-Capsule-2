@@ -41,6 +41,8 @@ The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been perma
   - `POST /api/report`: User safety reporting endpoint.
   - `POST /api/contact`: Public and advertiser inquiry endpoint with Cloudflare Pages Functions.
   - `POST /api/events`: Batched client telemetry event ingestion.
+  - `POST /api/notifications/register`: Android app device-token registration for Firebase push delivery using D1 persistence.
+  - `POST /api/admin/send-push`: Admin-only Firebase Cloud Messaging broadcast/test endpoint using Google OAuth2 JWT + FCM HTTP v1.
   - `POST /api/analytics/events`: Authenticated, consented Android event ingestion with event-id deduplication.
   - `GET /api/analytics/overview`, `GET /api/analytics/trends`: Curator-session-protected live Android KPI reads.
   - `GET /api/analytics/retention`, `/funnel`, `/content`, `/audience`, `/ai-insights`: Aggregate dashboard analytics for the remaining live tabs.
