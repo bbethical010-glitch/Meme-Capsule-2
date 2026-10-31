@@ -107,7 +107,6 @@ else
   PAYLOAD="{\"message\":\"$MESSAGE\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"$BRANCH\"}"
 fi
 
-API_URL="https://api.github.com/repos/$Owner/$Repo/contents/MEME_CAPSULE_KNOWLEDGE.md"
 API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/MEME_CAPSULE_KNOWLEDGE.md"
 
 TMP_RESP=$(mktemp)

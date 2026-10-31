@@ -41,10 +41,12 @@ Meme Capsule operates across three decoupled codebases:
 - [`majority-consensus-curation-walkthrough.md`](./majority-consensus-curation-walkthrough.md) — detailed walkthrough of the three-judge consensus implementation, architecture diagrams, changed-file inventory, and acceptance evidence.
 - [`PROJECT_STRUCTURE.md`](./PROJECT_STRUCTURE.md) — Detailed directory mapping, route mappings, and component hierarchy.
 - [`README_ANALYTICS.md`](./README_ANALYTICS.md) — Analytics tracking SDK, ingestion API, and worker aggregation pipeline.
+- [`ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md`](./ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md) — Phased path from the current analytics foundation to Android integration and production release.
 - [`report.md`](./report.md) — Google Lighthouse audit analysis, Core Web Vitals, accessibility, and backend caching remediation report.
 - [`CHANGELOG.md`](./CHANGELOG.md) — Release history and migration milestones.
 - [`CLAUDE.md`](./CLAUDE.md) — Local development, Wrangler commands, and environment settings.
 - [`AGENTS.md`](./AGENTS.md) — AI agent workflow summary.
+- [`AI_AGENT_SINGLE_SOURCE_OF_TRUTH.md`](./AI_AGENT_SINGLE_SOURCE_OF_TRUTH.md) — Canonical master operating guide for all AI agents; this is the authoritative workflow and project truth document.
 - [`GEMINI.md`](./GEMINI.md) — Project context for Gemini models.
 - [`planning/`](./planning/) — Architecture planning documents, roadmaps, and specifications.
 - [`scripts/`](./scripts/) — Setup and utility guide documentation.
@@ -58,6 +60,7 @@ Meme Capsule operates across three decoupled codebases:
   - Permanent Force Remove hotkeys (`Shift+Delete` instant purge, `Shift+X` modal with reason) purging D1 metadata, R2 objects, and logging to `meme_force_removals`.
   - Multi-topic taxonomy tagging, tone labeling, and humour mechanism tagging.
   - Superadmin resolution dashboard for arbitrating conflicting judge votes.
+  - Static analytics preview at `#/curate/analytics` for design review; it uses mock data and is not a production analytics surface.
 - **AI Pre-Judge Assisted Loop (`/ai-judge`)**:
   - LLM-assisted batch evaluation of unreviewed memes.
   - Automatic confidence-scored recommendation generation for human approval.

@@ -1,6 +1,8 @@
 # AGENT_RULES.md — Permanent Operating Instructions for AI Coding Agents
 
 > **STOP. Before making any changes to this workspace, read `AGENT_RULES.md` completely and follow every applicable instruction in it throughout your entire task.**
+>
+> **Canonical AI agent authority:** The authoritative single-source operating manual for this repository is [`AI_AGENT_SINGLE_SOURCE_OF_TRUTH.md`](./AI_AGENT_SINGLE_SOURCE_OF_TRUTH.md). When a rule conflicts with a secondary document, the master guide and this repository rule set take precedence.
 
 ---
 

@@ -13,7 +13,7 @@ The public end-user mobile experience (Android APK `com.meme.capsule` and promot
 - **Frontend / Internal Workbenches:** React 19, TypeScript, Vite (`/curate`, `/admin`, `/reports`, `/ai-judge`, `/categorise`)
 - **Styling:** Neo-Brutalist CSS (`curate.css`, `admin.css`, `cat.css`, `aiJudge.css`) with bold typography (`Anton`, `Oswald`, `Chivo`)
 - **Backend/API:** Cloudflare Pages Functions (`functions/api/`, `functions/reports.ts`)
-- **Database:** Cloudflare D1 (SQLite) with 14 production migrations (`000` through `012`)
+- **Database:** Cloudflare D1 (SQLite) with additive migrations through `018`
 - **Storage:** Cloudflare R2 for media assets
 - **Hosting:** Cloudflare Pages
 

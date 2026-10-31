@@ -33,7 +33,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 ### Tech Stack
 - **Frontend / Internal Workbenches**: React 19, TypeScript, Vite 6
 - **Serverless API**: Cloudflare Pages Functions (`functions/api/`, `functions/reports.ts`)
-- **Database**: Cloudflare D1 (SQLite) with 14 production migrations (`d1/migrations/`)
+- **Database**: Cloudflare D1 (SQLite) with additive migrations through `018`, including the isolated Android analytics event table and deletion audit
 - **Object Storage**: Cloudflare R2 bucket (`memes`)
 - **Styling**: Neo-Brutalist Vanilla CSS (`curate.css`, `admin.css`, `cat.css`, `aiJudge.css`)
 
@@ -42,11 +42,12 @@ This file provides guidance to Claude Code when working with code in this reposi
 - `functions/`: Cloudflare Pages Functions API endpoints
   - `functions/api/`: Public delivery (`random-meme.ts`, `daily-meme.ts`, `like.ts`, `contact.ts`) and Admin APIs
   - `functions/_shared/`: Native D1/R2 database helpers (`d1r2.ts`), auth (`auth.ts`, `catAuth.ts`), and types
-- `d1/`: D1 schema definitions and migrations (`000` through `012`)
+- `d1/`: D1 schema definitions and migrations (`000` through `018`)
 - `docs/`: Comprehensive project documentation
 - `public/`: Static web assets and manifest
 
 ## Development Rules
 - Follow all permanent instructions in [`AGENT_RULES.md`](./AGENT_RULES.md).
 - Do not modify past database migrations (`000_complete_setup.sql` through `012_add_curation_status_to_memes.sql`).
+- Configure the server-side `ANALYTICS_APP_TOKEN` before enabling Android analytics ingestion.
 - Always verify changes with `npm run build` before considering any task complete.

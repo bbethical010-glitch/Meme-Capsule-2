@@ -1209,9 +1209,6 @@ meme application/
 │   ├── fetch-knowledge.sh
 │   ├── update-knowledge.ps1
 │   └── update-knowledge.sh
-├── .nexus
-├── .vscode
-│   └── launch.json
 ├── .windsurf
 │   └── skills
 │       └── brag
@@ -1535,6 +1532,7 @@ meme application/
 │   │   │   ├── frame-03-at-15.038s.png
 │   │   │   └── frame-04-at-19.449s.png
 │   │   └── index.html                                # HTML entry point
+│   ├── .DS_Store
 │   ├── brag-plan.md
 │   ├── brag.mp4
 │   └── composition-brief.md
@@ -1555,7 +1553,13 @@ meme application/
 │   │   ├── 011_reconcile_active_and_curation_sync.sql
 │   │   ├── 012_add_curation_status_to_memes.sql
 │   │   ├── 013_add_nsfw_flag.sql                     # D1 migration 013: is_nsfw & nsfw_flagged_by columns
-│   │   └── 014_add_resolved_curation_fields.sql
+│   │   ├── 014_add_resolved_curation_fields.sql
+│   │   ├── 015_android_analytics_events.sql
+│   │   ├── 016_android_analytics_schema_version.sql
+│   │   ├── 017_android_analytics_query_indexes.sql
+│   │   └── 018_android_analytics_deletion_audit.sql
+│   │   └── 016_android_analytics_schema_version.sql
+│   ├── .DS_Store
 │   ├── schema.sql                                    # SQLite schema for meme metadata
 │   └── seed.sql
 ├── docs                                              # Dedicated project documentation folder
@@ -1563,11 +1567,15 @@ meme application/
 │   │   ├── AI-SPEC.md
 │   │   ├── Multi-Judge Majority Consensus — curate Implementation Prompt.md
 │   │   └── ROADMAP.md                                # Phase-by-phase development plan
-│   ├── superpowers
-│   │   └── plans
+│   ├── .DS_Store
 │   ├── AGENT_RULES.md
 │   ├── AGENTS.md
+│   ├── AI_AGENT_SINGLE_SOURCE_OF_TRUTH.md
 │   ├── AI_PREJUDGE_CURATE_ANALYSIS.md
+│   ├── ANALYTICS_API_SPEC.md
+│   ├── ANALYTICS_DASHBOARD_PRODUCTION_PLAN.md
+│   ├── ANDROID_ANALYTICS_DATA_COLLECTION_STANDARD.md
+│   ├── CAPACITY_ANALYSIS.md
 │   ├── CHANGELOG.md                                  # Version history
 │   ├── CLAUDE.md                                     # Development setup & commands guide
 │   ├── CLOUDFLARE_D1_USAGE_AND_OPTIMIZATION_REPORT.md
@@ -1583,6 +1591,7 @@ meme application/
 │   ├── README_ANALYTICS.md
 │   ├── README.md                                     # Project overview and setup guide
 │   ├── report.md
+│   ├── SECURITY_PRIVACY_COMPLIANCE_AND_SCALING_PLAN.md
 │   ├── STATE.md                                      # Current project state and next actions (in docs/)
 │   └── walkthrough.md
 ├── functions                                         # Cloudflare Pages Functions (serverless API)
@@ -1632,6 +1641,15 @@ meme application/
 │   │   │   ├── logout.ts
 │   │   │   ├── next-meme.ts
 │   │   │   └── runs.ts
+│   │   ├── analytics
+│   │   │   ├── ai-insights.ts
+│   │   │   ├── audience.ts
+│   │   │   ├── content.ts
+│   │   │   ├── events.ts
+│   │   │   ├── funnel.ts
+│   │   │   ├── overview.ts
+│   │   │   ├── retention.ts
+│   │   │   └── trends.ts
 │   │   ├── cat
 │   │   │   ├── admin                                 # Admin dashboard
 │   │   │   │   ├── force-removals.ts
@@ -1740,6 +1758,8 @@ meme application/
 │   │   │   ├── aiJudgePrompt.ts
 │   │   │   ├── aiJudgeTypes.ts
 │   │   │   └── useAiJudgeLoop.ts
+│   │   ├── analytics-preview
+│   │   │   └── AnalyticsPreviewPage.tsx
 │   │   ├── super
 │   │   │   ├── curateSuperApi.ts
 │   │   │   ├── CurateSuperDashboard.tsx
@@ -1755,9 +1775,7 @@ meme application/
 │   │   ├── CurateLogin.tsx
 │   │   ├── curateTypes.ts
 │   │   ├── CurationStatsModal.tsx
-│   │   ├── EditorialButtons.tsx
-│   │   ├── useCurateGestures.ts
-│   │   └── useIsMobile.ts
+│   │   └── EditorialButtons.tsx
 │   ├── data                                          # Static data
 │   │   └── fallbackMemes.ts                          # Static fallback memes for offline/empty DB
 │   ├── lib                                           # Utility modules
@@ -1773,13 +1791,11 @@ meme application/
 │   └── curationConsensus.test.mjs
 ├── workers
 │   └── analyticsAggregator.ts
-├── .dev.vars
 ├── .dev.vars.example                                 # Environment variable template
-├── .env
+├── .DS_Store
 ├── .gitignore                                        # Git ignore rules
 ├── AGENT_RULES.md
 ├── AGENTS.md
-├── converted.pdf
 ├── FORCE_REMOVE_IMPLEMENTATION.md
 ├── FORCE_REMOVE_TODO.md
 ├── index.html                                        # HTML entry point

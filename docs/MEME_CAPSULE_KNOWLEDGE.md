@@ -139,6 +139,7 @@ Modern internet culture is trapped inside social media feeds (Instagram, TikTok,
 - **Admin Control Panel & SQL Runner (`/admin`):** 5-metric top stats bar, dedicated `[EXCLUDED]` filter tab, R2 binary uploads, R2-to-D1 sync, and analytics recalculation.
 - **Token-Gated Safety Moderation (`/reports`):** Ingestion of user-flagged content (`POST /api/report`) with one-click soft-archival and `content_blacklist` enforcement.
 - **Multimodal AI Pre-Curator Loop (`/ai-judge`):** Gemini Vision and Python NVIDIA NIM Llama 3.2 11B Vision pipeline categorizing humor mechanisms, topics, and safety.
+- **Firebase Push Notification Engine:** Cloudflare Pages edge endpoints register Android device tokens in D1 (`device_tokens`), sign Google RS256 JWTs with Web Crypto, exchange a Google OAuth2 access token, and dispatch FCM HTTP v1 messages from the serverless platform.
 
 ### Q7: How is it technically built?
 - **Mobile Native Wrapper:** Android app built with **Capacitor 8** wrapping a Vite 6 / React 19 SPA, extended with a custom Java native bridge (`MainActivity.java`).
@@ -662,6 +663,7 @@ Standalone, token-protected dashboard rendering directly from `functions/reports
 ### 5.9 Telemetry Pipeline & Edge Ranking Recalculation Engine
 - **Client Side:** Client actions (`view`, `skip`, `like`, `share`, `download`) are enqueued into a local circular buffer and flushed every 30 seconds to `POST /api/events`.
 - **Edge Side:** Events are written into `meme_events` with timestamps and session identifiers.
+- **Android KPI Contract:** Consent-granted Android events use `POST /api/analytics/events` and are stored separately in `android_analytics_events`. Migration 016 requires `schema_version: 1`; the server validates event IDs, anonymous SHA-256 user hashes, UTC timestamps, event names, and consent before idempotent insertion. Curator-session-protected aggregate readers power the internal analytics dashboard without returning hashes or raw properties.
 - **Recalculation:** The recalculation worker aggregates events across time windows, computing:
   - *Engagement Score:* Weighted combination of likes, shares, and downloads against views.
   - *Virality Score:* Ratio of external shares to total views.
@@ -872,8 +874,6 @@ CRITICAL RULES & CONSTRAINTS:
 4. CLEAR CODEBASE BOUNDARIES: Maintain strict separation between Mobile APK, Promo Web, and Edge Backend.
 =========================================================
 ```
-
-
 
 
 

@@ -34,6 +34,7 @@ import type { MemeInputMethod, MemeStatus, Rarity } from "../types";
 import AnalyticsDashboard from "./analytics-dashboard/AnalyticsDashboard";
 import SqlRunner from "./sql-runner/SqlRunner";
 import AiTab from "./ai/AiTab";
+import PushNotifications from "./PushNotifications";
 import "./admin.css";
 
 type FormState = Omit<AdminMeme, "tags"> & {
@@ -164,7 +165,7 @@ export default function AdminApp() {
   const [backendConfig, setBackendConfig] = useState<{ hasR2PublicUrl?: boolean; hasDatabase?: boolean }>({});
   const [backendActiveCount, setBackendActiveCount] = useState<number | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [activeTab, setActiveTab] = useState<"vault" | "analytics" | "sql" | "ai">("vault");
+  const [activeTab, setActiveTab] = useState<"vault" | "analytics" | "sql" | "ai" | "notifications">("vault");
 
   // Filtering & Pagination
   const [searchTerm, setSearchTerm] = useState("");
@@ -656,6 +657,10 @@ export default function AdminApp() {
               <span className="material-symbols-outlined">psychology</span>
               AI Categorisation
             </li>
+            <li className={activeTab === "notifications" ? "active" : ""} onClick={() => setActiveTab("notifications")}>
+              <span className="material-symbols-outlined">notifications</span>
+              Push Notifications
+            </li>
             <li onClick={useLocalMode}>
               <span className="material-symbols-outlined">inventory_2</span>
               Use Local Drafts
@@ -755,6 +760,10 @@ export default function AdminApp() {
               className="brutalist-border brutalist-shadow-black"
             >
               <AiTab adminToken={adminToken} />
+            </div>
+          ) : activeTab === "notifications" ? (
+            <div className="brutalist-border brutalist-shadow-black" style={{ background: "var(--background)", flex: 1, minHeight: "600px" }}>
+              <PushNotifications adminToken={adminToken} />
             </div>
           ) : (
             <div className="split-pane">

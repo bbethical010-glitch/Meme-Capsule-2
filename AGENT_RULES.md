@@ -4,6 +4,8 @@
 > 
 > The authoritative canonical operating guide is maintained at:  
 > 👉 [**docs/AGENT_RULES.md**](./docs/AGENT_RULES.md)
+>
+> **Master AI-agent authority:** The single-source operating manual for this repository is [`docs/AI_AGENT_SINGLE_SOURCE_OF_TRUTH.md`](./docs/AI_AGENT_SINGLE_SOURCE_OF_TRUTH.md). If a rule conflicts with a supporting doc, this master guide and the repo operating rules take precedence.
 
 ---
 
