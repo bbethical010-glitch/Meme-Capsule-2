@@ -149,6 +149,13 @@ worker-maintained aggregate keyed by date, platform, event, category, and app
 version. It contains only counts and distinct-user/session aggregates; raw
 events remain the source of truth for deletion and retention operations.
 
+### Firebase Notification Tokens
+
+Migration 021 creates the device-token table and migration 022 renames it to
+the canonical `notification_tokens` table used by Android registration and
+the protected admin FCM dispatch/statistics endpoints. It stores each FCM
+token, platform, app version, active flag, and created/updated timestamps.
+
 ## API Flow
 
 Public random meme:

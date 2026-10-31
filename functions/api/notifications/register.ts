@@ -27,7 +27,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   try {
     await env.DB.prepare(
-      `INSERT INTO device_tokens (token, platform, app_version, is_active, updated_at)
+      `INSERT INTO notification_tokens (token, platform, app_version, is_active, updated_at)
        VALUES (?, ?, ?, 1, datetime('now'))
        ON CONFLICT(token) DO UPDATE SET
          platform = excluded.platform,

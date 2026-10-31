@@ -52,7 +52,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       tokens = [test_token.trim()];
     } else {
       const { results } = await env.DB.prepare(
-        "SELECT token FROM device_tokens WHERE is_active = 1"
+        "SELECT token FROM notification_tokens WHERE is_active = 1"
       ).all<{ token: string }>();
       tokens = (results || []).map((r) => r.token);
     }
@@ -89,7 +89,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           if (res.unregistered) {
             deactivated++;
             await env.DB.prepare(
-              "UPDATE device_tokens SET is_active = 0, updated_at = datetime('now') WHERE token = ?"
+              "UPDATE notification_tokens SET is_active = 0, updated_at = datetime('now') WHERE token = ?"
             )
               .bind(tok)
               .run();

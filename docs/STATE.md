@@ -42,7 +42,8 @@ The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been perma
   - `POST /api/contact`: Public and advertiser inquiry endpoint with Cloudflare Pages Functions.
   - `POST /api/events`: Batched client telemetry event ingestion.
   - `POST /api/notifications/register`: Android app device-token registration for Firebase push delivery using D1 persistence.
-  - `POST /api/admin/send-push`: Admin-only Firebase Cloud Messaging broadcast/test endpoint using Google OAuth2 JWT + FCM HTTP v1.
+  - `POST /api/admin/notifications/send`: Admin-only Firebase Cloud Messaging dispatch to all active devices, a topic, or one test token.
+  - `GET /api/admin/notifications/stats`: Protected active-device and app-version/platform breakdown.
   - `POST /api/analytics/events`: Authenticated, consented Android event ingestion with event-id deduplication.
   - `GET /api/analytics/overview`, `GET /api/analytics/trends`: Curator-session-protected live Android KPI reads.
   - `GET /api/analytics/retention`, `/funnel`, `/content`, `/audience`, `/ai-insights`: Aggregate dashboard analytics for the remaining live tabs.
@@ -87,6 +88,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
 13. `011_reconcile_active_and_curation_sync.sql`: Synchronization of active counts between Admin and Curation portals.
 14. `012_add_curation_status_to_memes.sql`: 3-tier partitioning architecture introducing `curation_status` (`active`, `excluded`, `backlog`).
 15. `013_add_nsfw_flag.sql`, `014_add_resolved_curation_fields.sql`, `015_android_analytics_events.sql`, `016_android_analytics_schema_version.sql`, `017_android_analytics_query_indexes.sql`, and `018_android_analytics_deletion_audit.sql`: NSFW metadata, resolved curation fields, isolated consented Android telemetry, versioned analytics payloads, KPI indexes, and deletion auditing.
+16. `021_create_device_tokens.sql` and `022_rename_device_tokens_to_notification_tokens.sql`: FCM device registration storage and the canonical `notification_tokens` table name.
 
 ### C. Cloudflare R2 Media Storage
 - Bucket `memes` configured with public access enabled.

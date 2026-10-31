@@ -13,6 +13,7 @@ export type Env = {
   FIREBASE_PROJECT_ID?: string;
   FIREBASE_CLIENT_EMAIL?: string;
   FIREBASE_PRIVATE_KEY?: string;
+  FIREBASE_SERVICE_ACCOUNT?: string;
 };
 
 export interface CatUser {
