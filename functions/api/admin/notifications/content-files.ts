@@ -14,11 +14,42 @@ const normalizeEntries = (value: unknown): ContentEntry[] => {
     if (typeof row === "string") return { title: "", body: row.trim() };
     if (!row || typeof row !== "object") return { title: "", body: "" };
     const item = row as Record<string, unknown>;
+    const header = typeof item.header === "string" ? item.header.trim() : "";
+    const subtitle = typeof item.subtitle === "string" ? item.subtitle.trim() : "";
+    const body = typeof item.body === "string"
+      ? item.body.trim()
+      : typeof item.message === "string"
+        ? item.message.trim()
+        : [header, subtitle].filter(Boolean).join("\n");
     return {
       title: typeof item.title === "string" ? item.title.trim() : "",
-      body: typeof item.body === "string" ? item.body.trim() : typeof item.message === "string" ? item.message.trim() : "",
+      body,
     };
   }).filter((row) => row.body && row.title.length <= 120 && row.body.length <= 300);
+};
+
+const normalizeJsonEntries = (value: unknown): ContentEntry[] => {
+  if (Array.isArray(value)) return normalizeEntries(value);
+  if (!value || typeof value !== "object") return [];
+  const document = value as Record<string, unknown>;
+  if (Array.isArray(document.entries)) return normalizeEntries(document.entries);
+  if (!Array.isArray(document.sections)) return [];
+
+  return document.sections.flatMap((section) => {
+    if (!section || typeof section !== "object") return [];
+    const item = section as Record<string, unknown>;
+    const title = typeof item.name === "string"
+      ? item.name.trim()
+      : typeof item.title === "string"
+        ? item.title.trim()
+        : "";
+    if (!Array.isArray(item.entries)) return [];
+    return normalizeEntries(item.entries.map((entry) => (
+      entry && typeof entry === "object"
+        ? { ...(entry as Record<string, unknown>), title }
+        : { title, body: entry }
+    )));
+  });
 };
 
 const parseCsv = (text: string): ContentEntry[] => {
@@ -75,8 +106,8 @@ const parseFile = (name: string, text: string): ContentEntry[] => {
   if (name.toLowerCase().endsWith(".txt")) return parseCatalogText(text);
   if (name.toLowerCase().endsWith(".json")) {
     try {
-      const parsed = JSON.parse(text);
-      return normalizeEntries(parsed.entries || parsed);
+      const parsed = JSON.parse(text.replace(/^\uFEFF/, ""));
+      return normalizeJsonEntries(parsed);
     } catch {
       return [];
     }
