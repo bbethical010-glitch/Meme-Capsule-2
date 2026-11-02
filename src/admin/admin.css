@@ -73,6 +73,13 @@
 .push-modal h3 { font-family: var(--font-display); font-size: 28px; color: var(--secondary); margin: 8px 0; }
 .push-modal p { color: var(--on-surface-variant); }
 .push-modal-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.scheduled-console { padding: 28px; border-top: 4px solid #000; color: var(--on-surface); }
+.scheduled-console h3 { margin: 0 0 8px; color: var(--secondary); font-family: var(--font-display); letter-spacing: .04em; }
+.schedule-list { display: grid; gap: 8px; margin-top: 8px; }
+.schedule-item { display: grid; gap: 4px; width: 100%; box-sizing: border-box; text-align: left; background: var(--surface-container-lowest); color: var(--on-surface); border: 2px solid var(--outline); padding: 10px; font: 12px var(--font-body); }
+button.schedule-item { cursor: pointer; }
+.schedule-item.selected { border-color: var(--secondary); box-shadow: 3px 3px var(--secondary); }
+.schedule-item span { color: var(--on-surface-variant); }
 @media (max-width: 800px) {
   .push-console { padding: 16px; }
   .push-heading, .push-grid { grid-template-columns: 1fr; display: grid; }

@@ -35,6 +35,7 @@ import AnalyticsDashboard from "./analytics-dashboard/AnalyticsDashboard";
 import SqlRunner from "./sql-runner/SqlRunner";
 import AiTab from "./ai/AiTab";
 import PushNotifications from "./PushNotifications";
+import ScheduledNotifications from "./ScheduledNotifications";
 import "./admin.css";
 
 type FormState = Omit<AdminMeme, "tags"> & {
@@ -764,6 +765,7 @@ export default function AdminApp() {
           ) : activeTab === "notifications" ? (
             <div className="brutalist-border brutalist-shadow-black" style={{ background: "var(--background)", flex: 1, minHeight: "600px" }}>
               <PushNotifications adminToken={adminToken} />
+              <ScheduledNotifications adminToken={adminToken} />
             </div>
           ) : (
             <div className="split-pane">

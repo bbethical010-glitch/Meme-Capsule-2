@@ -68,6 +68,8 @@ Meme Capsule operates across three decoupled codebases:
   - Cloudflare D1 database management and R2 storage sync.
   - Raw SQL query runner with safe execution guards.
   - Event telemetry recalculation engine and CSV/Excel exports.
+  - Push Notifications control room with FCM composer, live Android preview, device stats, target selection, confirmation, and dispatch logs.
+  - Scheduled Drops panel with reusable message templates and recurring timezone-aware delivery schedules.
 - **Moderation Dashboard (`/reports`)**:
   - Token-protected review interface for user-reported content.
   - One-click meme archiving and addition to `content_blacklist`.
@@ -76,6 +78,7 @@ Meme Capsule operates across three decoupled codebases:
   - `POST /api/events` (telemetry queue flusher).
   - `POST /api/report` (user safety reporting).
   - Admin analytics endpoints (`/api/admin/analytics/*`).
+  - `POST /api/admin/notifications/send` and `GET /api/admin/notifications/stats` (protected FCM HTTP v1 dispatch and device metrics).
 
 ## Admin Dashboard
 
@@ -113,8 +116,20 @@ Admin backend routes:
 - `PATCH /api/admin/memes` - update meme metadata, including safe ID edits
 - `DELETE /api/admin/memes` - archive a meme by setting `status = archived` and `is_active = 0`
 - `POST /api/admin/upload` - upload image/video files to R2
+- `POST /api/admin/notifications/send` - dispatch an FCM notification to active devices, a topic, or a single token
+- `GET /api/admin/notifications/stats` - return registered-device totals and app/platform breakdowns
+- `GET/POST /api/admin/notifications/messages` - list and create reusable notification messages
+- `GET/POST/PATCH /api/admin/notifications/schedules` - list, create, enable, and disable recurring schedules and delivery history
 
 The admin token is not bundled into the frontend. Type it into the `/admin` backend panel when you want to manage R2/D1 content.
+
+### Background notification Worker setup
+
+The admin UI stores schedules in D1; it does not run the scheduler. Deploy
+`workers/notificationScheduler.ts` with `workers/wrangler.notifications.toml` as
+a separate Worker. Apply migration 023 first and configure the
+`FIREBASE_SERVICE_ACCOUNT` Worker secret. Verify the one-minute cron with a
+single-device or short-lived test schedule before enabling broadcast delivery.
 
 ## Run Locally
 
@@ -156,6 +171,7 @@ dist
 Add the admin token in Cloudflare Pages environment settings:
 
 - `ADMIN_API_TOKEN`
+- `FIREBASE_SERVICE_ACCOUNT` (Cloudflare Pages secret containing the Firebase service-account JSON)
 
 D1 database and R2 bucket bindings are configured in `wrangler.toml` and applied automatically during deployment.
 
