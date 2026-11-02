@@ -125,6 +125,11 @@ Admin backend routes:
 
 The admin token is not bundled into the frontend. Type it into the `/admin` backend panel when you want to manage R2/D1 content.
 
+Library-backed schedules require only a time, timezone/days, and an uploaded
+content file. At delivery time, the notification Worker reads the R2 library
+and randomly selects one valid title/body pair; a fallback message is retained
+only for the existing database foreign-key contract.
+
 ### Background notification Worker setup
 
 The admin UI stores schedules in D1; it does not run the scheduler. Deploy
