@@ -44,6 +44,8 @@ The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been perma
   - `POST /api/notifications/register`: Android app device-token registration for Firebase push delivery using D1 persistence.
   - `POST /api/admin/notifications/send`: Admin-only Firebase Cloud Messaging dispatch to all active devices, a topic, or one test token.
   - `GET /api/admin/notifications/stats`: Protected active-device and app-version/platform breakdown.
+  - `GET/POST /api/admin/notifications/messages`: Admin-managed reusable notification message templates.
+  - `GET/POST /api/admin/notifications/schedules`: Admin-managed timezone-aware recurring schedules and delivery history.
   - `POST /api/analytics/events`: Authenticated, consented Android event ingestion with event-id deduplication.
   - `GET /api/analytics/overview`, `GET /api/analytics/trends`: Curator-session-protected live Android KPI reads.
   - `GET /api/analytics/retention`, `/funnel`, `/content`, `/audience`, `/ai-insights`: Aggregate dashboard analytics for the remaining live tabs.
@@ -89,6 +91,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
 14. `012_add_curation_status_to_memes.sql`: 3-tier partitioning architecture introducing `curation_status` (`active`, `excluded`, `backlog`).
 15. `013_add_nsfw_flag.sql`, `014_add_resolved_curation_fields.sql`, `015_android_analytics_events.sql`, `016_android_analytics_schema_version.sql`, `017_android_analytics_query_indexes.sql`, and `018_android_analytics_deletion_audit.sql`: NSFW metadata, resolved curation fields, isolated consented Android telemetry, versioned analytics payloads, KPI indexes, and deletion auditing.
 16. `021_create_device_tokens.sql` and `022_rename_device_tokens_to_notification_tokens.sql`: FCM device registration storage and the canonical `notification_tokens` table name.
+17. `023_scheduled_notifications.sql`: Reusable notification messages, recurring schedules, and idempotent delivery-run audit records.
 
 ### C. Cloudflare R2 Media Storage
 - Bucket `memes` configured with public access enabled.
@@ -115,6 +118,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
 - **Analytics ingestion hardening**: The Android ingestion endpoint now enforces JSON content type, a 2 MiB body limit, bounded optional fields/properties, nested PII/secret-key rejection, fixed-window per-IP/per-token rate limits through `ANALYTICS_KV`, `Retry-After` responses, and aggregate operational counters that exclude payloads, hashes, IPs, and tokens.
 - **Raw-event retention**: The scheduled analytics worker purges up to 10,000 expired Android events per run. Retention defaults to 90 days and can be configured with `ANALYTICS_RAW_RETENTION_DAYS` (clamped to 1–365 days).
 - **Worker trigger protection**: Manual analytics-worker `POST` execution now requires the separate `ANALYTICS_WORKER_TOKEN`; scheduled execution remains internal.
+- **Scheduled notifications**: `workers/notificationScheduler.ts` runs every minute, evaluates D1 schedules in their configured IANA timezones, claims each occurrence once, dispatches through FCM, deactivates unregistered tokens, and records delivery outcomes. It is independent of the admin page.
 - **Phase 3 query performance**: Migration 017 adds composite indexes for time-bounded Android KPI queries. Overview and trends responses now include explicit freshness and empty-state metadata.
 - **Phase 4 deletion lifecycle**: Migration 018 adds `android_analytics_deletion_audit`; superadmins can process verified anonymous-hash deletion requests through `POST /api/analytics/deletion`, with audit listing through the protected `GET` route.
 - **Phase 4 consent lineage**: Migration 019 stores `consent_version` with each Android event, defaulting legacy clients to `v1`. Consent denial/revocation remains local and must not emit behavioral telemetry.

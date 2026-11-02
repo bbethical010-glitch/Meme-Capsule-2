@@ -156,6 +156,12 @@ the canonical `notification_tokens` table used by Android registration and
 the protected admin FCM dispatch/statistics endpoints. It stores each FCM
 token, platform, app version, active flag, and created/updated timestamps.
 
+Migration 023 adds `notification_messages` for reusable title/body/deep-link
+templates, `notification_schedules` for enabled recurring times, weekdays,
+audience, and IANA timezone, and `notification_delivery_runs` for idempotent
+per-occurrence audit records. The separate notification Worker evaluates these
+tables every minute and continues operating when `/admin` is closed.
+
 ## API Flow
 
 Public random meme:
