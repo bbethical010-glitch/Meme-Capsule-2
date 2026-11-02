@@ -159,10 +159,18 @@ The backend is completely serverless. When a client calls `GET /api/random-meme`
 ```sql
 SELECT m.* FROM memes m
 INNER JOIN meme_curation_final f ON m.id = f.meme_id
-WHERE m.is_active = 1 AND m.status = 'active' AND f.corpus_status = 'keep' AND m.random_key >= ?
-ORDER BY m.random_key ASC LIMIT 1;
+WHERE m.is_active = 1 AND m.status = 'active' AND f.corpus_status = 'keep'
+  AND m.random_key >= ?
+ORDER BY m.random_key ASC LIMIT 5;
 ```
-Any meme that is unfinalized, in judging, or excluded is mathematically impossible to retrieve via `/api/random-meme` or `/api/daily-meme`. Media assets are served directly from Cloudflare R2 via an edge CDN URL with global caching and zero egress charges.
+The random endpoint samples from a candidate window and accepts up to 50
+recent IDs through `exclude`, preventing short-session repetition. It combines
+wrap-around candidates when the window reaches the end, falls back without the
+exclusion list only when every eligible meme is excluded, and returns explicit
+no-store cache headers. Any meme that is unfinalized, in judging, or excluded
+is mathematically impossible to retrieve via `/api/random-meme` or
+`/api/daily-meme`. Media assets are served directly from Cloudflare R2 via an
+edge CDN URL with global caching and zero egress charges.
 
 ### Q9: How does its AI system work?
 - **Public Product:** **ZERO AI RECOMMENDATION ALGORITHMS.** Content delivery is randomized serendipity.

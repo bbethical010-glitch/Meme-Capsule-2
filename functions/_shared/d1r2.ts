@@ -131,28 +131,52 @@ export const normalizeRow = (env: Env, row: D1MemeRow): Meme => ({
   nsfw_flagged_by: row.nsfw_flagged_by ?? null
 });
 
-export const getRandomMeme = async (env: Env, options?: { nsfw?: boolean }): Promise<Meme | null> => {
-  const randomKey = Math.random();
+export const getRandomMeme = async (
+  env: Env,
+  options?: { nsfw?: boolean; excludeIds?: string[] }
+): Promise<Meme | null> => {
   const nsfwClause = options?.nsfw ? "" : "AND (m.is_nsfw IS NULL OR m.is_nsfw = 0)";
+  const excludeIds = [...new Set(options?.excludeIds || [])].filter(Boolean).slice(0, 50);
 
-  const { results } = await env.DB.prepare(
-    `SELECT m.* FROM memes m
-     INNER JOIN meme_curation_final f ON m.id = f.meme_id
-     WHERE m.is_active = 1 AND m.status = 'active' AND f.corpus_status = 'keep' AND (m.category IS NULL OR LOWER(m.category) != 'archived') ${nsfwClause} AND m.random_key >= ?
-     ORDER BY m.random_key ASC LIMIT 1`
-  ).bind(randomKey).all<D1MemeRow>();
+  const findCandidates = async (ids: string[]) => {
+    const exclusionClause = ids.length
+      ? `AND m.id NOT IN (${ids.map(() => "?").join(", ")})`
+      : "";
+    const baseWhere = `
+      FROM memes m
+      INNER JOIN meme_curation_final f ON m.id = f.meme_id
+      WHERE m.is_active = 1 AND m.status = 'active'
+        AND f.corpus_status = 'keep'
+        AND (m.category IS NULL OR LOWER(m.category) != 'archived')
+        ${nsfwClause} ${exclusionClause}`;
+    const randomKey = Math.random();
+    const first = await env.DB.prepare(
+      `SELECT m.* ${baseWhere} AND m.random_key >= ?
+       ORDER BY m.random_key ASC LIMIT 5`
+    ).bind(...ids, randomKey).all<D1MemeRow>();
+    const candidates = [...(first.results || [])];
 
-  let row = results[0];
+    if (candidates.length < 5) {
+      const wrap = await env.DB.prepare(
+        `SELECT m.* ${baseWhere}
+         ORDER BY m.random_key ASC LIMIT 5`
+      ).bind(...ids).all<D1MemeRow>();
+      const seen = new Set(candidates.map((candidate) => candidate.id));
+      for (const candidate of wrap.results || []) {
+        if (!seen.has(candidate.id)) {
+          candidates.push(candidate);
+          seen.add(candidate.id);
+        }
+      }
+    }
+    return candidates;
+  };
 
-  if (!row) {
-    const wrap = await env.DB.prepare(
-      `SELECT m.* FROM memes m
-       INNER JOIN meme_curation_final f ON m.id = f.meme_id
-       WHERE m.is_active = 1 AND m.status = 'active' AND f.corpus_status = 'keep' AND (m.category IS NULL OR LOWER(m.category) != 'archived') ${nsfwClause}
-       ORDER BY m.random_key ASC LIMIT 1`
-    ).all<D1MemeRow>();
-    row = wrap.results[0];
-  }
+  let candidates = await findCandidates(excludeIds);
+  if (!candidates.length && excludeIds.length) candidates = await findCandidates([]);
+  const row = candidates.length
+    ? candidates[Math.floor(Math.random() * candidates.length)]
+    : undefined;
 
   if (!row) return null;
 
@@ -178,7 +202,10 @@ export const getDailyMeme = async (env: Env, options?: { nsfw?: boolean }): Prom
   return meme.url ? meme : null;
 };
 
-export const randomMemeOrFallback = async (env: Env, options?: { nsfw?: boolean }) => {
+export const randomMemeOrFallback = async (
+  env: Env,
+  options?: { nsfw?: boolean; excludeIds?: string[] }
+) => {
   try {
     return (await getRandomMeme(env, options)) || randomFallbackMeme();
   } catch {
