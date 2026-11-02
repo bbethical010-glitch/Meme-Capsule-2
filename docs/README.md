@@ -128,8 +128,21 @@ The admin token is not bundled into the frontend. Type it into the `/admin` back
 The admin UI stores schedules in D1; it does not run the scheduler. Deploy
 `workers/notificationScheduler.ts` with `workers/wrangler.notifications.toml` as
 a separate Worker. Apply migration 023 first and configure the
-`FIREBASE_SERVICE_ACCOUNT` Worker secret. Verify the one-minute cron with a
-single-device or short-lived test schedule before enabling broadcast delivery.
+`FIREBASE_SERVICE_ACCOUNT` and `NOTIFICATION_WORKER_TOKEN` Worker secrets.
+Verify the one-minute cron with a single-device or short-lived test schedule
+before enabling broadcast delivery. The Scheduled Drops panel displays failed
+run errors from D1.
+
+Check Worker secrets and redeploy after changing them:
+
+```bash
+npx wrangler secret list --config workers/wrangler.notifications.toml
+npx wrangler deploy --config workers/wrangler.notifications.toml
+```
+
+The Worker retries failed or interrupted occurrences for a short delayed-cron
+window, so a transient configuration or FCM outage does not permanently consume
+the scheduled occurrence.
 
 ## Run Locally
 

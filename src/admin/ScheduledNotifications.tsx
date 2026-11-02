@@ -10,6 +10,17 @@ type Schedule = {
   is_enabled: number;
   title: string;
 };
+type DeliveryRun = {
+  id: string;
+  schedule_id: string;
+  occurrence_key: string;
+  status: string;
+  total_attempted: number;
+  total_sent: number;
+  stale_pruned: number;
+  error: string | null;
+  completed_at: string | null;
+};
 
 const headers = (token: string) => ({
   "X-Admin-Token": token,
@@ -20,6 +31,7 @@ const headers = (token: string) => ({
 export default function ScheduledNotifications({ adminToken }: { adminToken: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [runs, setRuns] = useState<DeliveryRun[]>([]);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [messageId, setMessageId] = useState("");
@@ -35,11 +47,12 @@ export default function ScheduledNotifications({ adminToken }: { adminToken: str
         fetch("/api/admin/notifications/schedules", { headers: headers(adminToken), cache: "no-store" }),
       ]);
       const messagePayload = (await messageResponse.json()) as { messages?: Message[]; error?: string };
-      const schedulePayload = (await scheduleResponse.json()) as { schedules?: Schedule[]; error?: string };
+      const schedulePayload = (await scheduleResponse.json()) as { schedules?: Schedule[]; runs?: DeliveryRun[]; error?: string };
       if (!messageResponse.ok) throw new Error(messagePayload.error || "Failed to load messages");
       if (!scheduleResponse.ok) throw new Error(schedulePayload.error || "Failed to load schedules");
       setMessages(messagePayload.messages || []);
       setSchedules(schedulePayload.schedules || []);
+      setRuns(schedulePayload.runs || []);
       if (!messageId && messagePayload.messages?.[0]) setMessageId(messagePayload.messages[0].id);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Failed to load schedules");
@@ -137,6 +150,11 @@ export default function ScheduledNotifications({ adminToken }: { adminToken: str
           <button type="submit" className="push-button push-button-yellow" disabled={!messages.length}>ENABLE SCHEDULE</button>
           <div className="schedule-list">
             {schedules.map((schedule) => <div className="schedule-item" key={schedule.id}><strong>{schedule.time_local} {schedule.timezone}</strong><span>{schedule.title} · days {schedule.days_of_week}</span><button type="button" className="push-button push-button-dark" onClick={() => void toggleSchedule(schedule)}>{schedule.is_enabled ? "DISABLE" : "ENABLE"}</button></div>)}
+          </div>
+          <h3>RECENT DELIVERY RUNS</h3>
+          <div className="schedule-list">
+            {runs.map((run) => <div className="schedule-item" key={run.id}><strong>{run.status.toUpperCase()} · {run.occurrence_key}</strong><span>Attempted: {run.total_attempted} · Sent: {run.total_sent} · Stale: {run.stale_pruned}</span>{run.error && <span className="schedule-error">{run.error}</span>}</div>)}
+            {!runs.length && <div className="schedule-item"><span>No Worker runs recorded yet.</span></div>}
           </div>
         </form>
       </div>
