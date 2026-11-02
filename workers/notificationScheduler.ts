@@ -55,9 +55,25 @@ const pickContent = async (env: Env, schedule: ScheduleRow) => {
   if (!schedule.content_file_path) return { title: schedule.title, body: schedule.body };
   const object = await env.MEMES_BUCKET.get(schedule.content_file_path);
   if (!object) throw new Error("Scheduled content file is missing from R2");
-  const entries = JSON.parse(await object.text()) as Array<{ title: string; body: string }>;
-  if (!entries.length) throw new Error("Scheduled content file is empty");
-  return entries[Math.floor(Math.random() * entries.length)];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await object.text());
+  } catch {
+    throw new Error("Scheduled content file contains invalid JSON");
+  }
+  const entries = (Array.isArray(parsed) ? parsed : [])
+    .filter((entry): entry is { title: string; body: string } =>
+      Boolean(entry) &&
+      typeof entry === "object" &&
+      typeof (entry as { title?: unknown }).title === "string" &&
+      typeof (entry as { body?: unknown }).body === "string" &&
+      (entry as { title: string }).title.trim().length > 0 &&
+      (entry as { body: string }).body.trim().length > 0
+    );
+  if (!entries.length) throw new Error("Scheduled content file has no valid title/body entries");
+  const randomBytes = new Uint32Array(1);
+  crypto.getRandomValues(randomBytes);
+  return entries[randomBytes[0] % entries.length];
 };
 
 const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date, offset: number) => {

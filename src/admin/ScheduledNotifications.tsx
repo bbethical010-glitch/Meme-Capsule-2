@@ -72,7 +72,7 @@ export default function ScheduledNotifications({ adminToken }: { adminToken: str
   const uploadFile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const input = event.currentTarget.elements.namedItem("content-file") as HTMLInputElement;
-    if (!input.files?.[0]) { setNotice("Choose a JSON or CSV file first."); return; }
+    if (!input.files?.[0]) { setNotice("Choose a JSON, CSV, or TXT file first."); return; }
     const formData = new FormData(); formData.append("file", input.files[0]);
     try {
       const response = await fetch("/api/admin/notifications/content-files", {
@@ -145,11 +145,11 @@ export default function ScheduledNotifications({ adminToken }: { adminToken: str
         </div>
         <form className="push-form compact-form" onSubmit={createSchedule}>
           <h3>NEW SCHEDULE</h3>
-          <label>FALLBACK MESSAGE<select value={messageId} onChange={(event) => setMessageId(event.target.value)} required><option value="" disabled>Select message</option>{messages.map((message) => <option key={message.id} value={message.id}>{message.title}</option>)}</select></label>
-          <label>RANDOM FILE (OPTIONAL)<select value={fileId} onChange={(event) => setFileId(event.target.value)}><option value="">Use fallback message</option>{files.map((file) => <option key={file.id} value={file.id}>{file.file_name} ({file.entry_count})</option>)}</select></label>
+          <label>RANDOM CONTENT FILE<select value={fileId} onChange={(event) => setFileId(event.target.value)} required><option value="" disabled>Select uploaded file</option>{files.map((file) => <option key={file.id} value={file.id}>{file.file_name} ({file.entry_count})</option>)}</select></label>
+          <label>FALLBACK MESSAGE (OPTIONAL)<select value={messageId} onChange={(event) => setMessageId(event.target.value)}><option value="">Use library content</option>{messages.map((message) => <option key={message.id} value={message.id}>{message.title}</option>)}</select></label>
           <div className="schedule-fields"><label>TIME<input type="time" value={timeLocal} onChange={(event) => setTimeLocal(event.target.value)} required /></label><label>TIMEZONE<input value={timezone} onChange={(event) => setTimezone(event.target.value)} required /></label></div>
           <label>DAYS <input value={days} onChange={(event) => setDays(event.target.value)} placeholder="0,1,2,3,4,5,6" required /></label>
-          <button type="submit" className="push-button push-button-yellow push-button-compact" disabled={!messages.length}>ENABLE SCHEDULE</button>
+          <button type="submit" className="push-button push-button-yellow push-button-compact" disabled={!files.length}>ENABLE SCHEDULE</button>
           <div className="compact-list schedule-list">
             {schedules.map((schedule) => <div className="schedule-card" key={schedule.id}><div><strong>{schedule.time_local}</strong><span>{schedule.timezone} · {schedule.content_file_name || schedule.title}</span></div><div className="schedule-actions"><button type="button" className="push-button push-button-dark push-button-compact" onClick={() => void toggleSchedule(schedule)}>{schedule.is_enabled ? "DISABLE" : "ENABLE"}</button><button type="button" className="push-button push-button-danger push-button-compact" onClick={() => void deleteSchedule(schedule)}>DELETE</button></div></div>)}
           </div>
