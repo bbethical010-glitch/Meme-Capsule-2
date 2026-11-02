@@ -6,6 +6,7 @@ pages_build_output_dir = "dist"
 binding = "DB"
 database_name = "meme-capsule-db"
 database_id = "64e2bb16-1557-4d53-8e6b-5197c8636d09"
+migrations_dir = "d1/migrations"
 
 [[r2_buckets]]
 binding = "MEMES_BUCKET"
