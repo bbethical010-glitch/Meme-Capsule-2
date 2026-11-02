@@ -67,7 +67,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const target = payload.target || "all";
   const dayValues = days.split(",");
   if (
-    !payload.message_id ||
+    (!payload.message_id && !payload.content_file_id) ||
     !timePattern.test(timeLocal) ||
     !validTimezone(timezone) ||
     !dayValues.length ||
@@ -78,14 +78,28 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     return json({ error: "Invalid message, time, timezone, days, or target" }, { status: 400 });
   }
   try {
-    const message = await env.DB.prepare(
-      "SELECT id FROM notification_messages WHERE id = ? AND is_active = 1"
-    ).bind(payload.message_id).first();
-    if (!message) return json({ error: "Active message not found" }, { status: 400 });
+    let messageId = payload.message_id?.trim() || "";
+    if (messageId) {
+      const message = await env.DB.prepare(
+        "SELECT id FROM notification_messages WHERE id = ? AND is_active = 1"
+      ).bind(messageId).first();
+      if (!message) return json({ error: "Active message not found" }, { status: 400 });
+    }
+    let contentFilePath: string | null = null;
     if (payload.content_file_id) {
-      const file = await env.DB.prepare("SELECT id FROM notification_content_files WHERE id = ?")
+      const file = await env.DB.prepare(
+        "SELECT id, storage_path FROM notification_content_files WHERE id = ?"
+      )
         .bind(payload.content_file_id).first();
       if (!file) return json({ error: "Content file not found" }, { status: 400 });
+      contentFilePath = (file as { storage_path: string }).storage_path;
+    }
+    if (!messageId) {
+      messageId = crypto.randomUUID();
+      await env.DB.prepare(`
+        INSERT INTO notification_messages (id, title, body, screen)
+        VALUES (?, 'Scheduled content library', 'Content selected from the attached library.', 'drop')
+      `).bind(messageId).run();
     }
     const id = crypto.randomUUID();
     await env.DB.prepare(`
@@ -94,7 +108,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       id,
-      payload.message_id,
+      messageId,
       timeLocal,
       timezone,
       [...new Set(dayValues)].sort().join(","),
