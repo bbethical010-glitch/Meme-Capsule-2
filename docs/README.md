@@ -121,7 +121,7 @@ Admin backend routes:
 - `GET /api/admin/notifications/stats` - return registered-device totals and app/platform breakdowns
 - `GET/POST /api/admin/notifications/messages` - list and create reusable notification messages
 - `GET/POST/PATCH /api/admin/notifications/schedules` - list, create, enable, and disable recurring schedules and delivery history
-- `GET/POST /api/admin/notifications/content-files` - list and permanently store validated JSON/CSV message libraries
+- `GET/POST /api/admin/notifications/content-files` - list and permanently store validated JSON/CSV/TXT message libraries. JSON uploads may be a flat array of `{ "title": "...", "body": "..." }` entries, an `{ "entries": [...] }` wrapper, or the sectioned catalog shape with `sections[].entries[]`; UTF-8 BOMs are accepted.
 
 The admin token is not bundled into the frontend. Type it into the `/admin` backend panel when you want to manage R2/D1 content.
 
