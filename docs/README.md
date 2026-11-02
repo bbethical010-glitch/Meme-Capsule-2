@@ -122,8 +122,14 @@ Admin backend routes:
 - `GET/POST /api/admin/notifications/messages` - list and create reusable notification messages
 - `GET/POST/PATCH /api/admin/notifications/schedules` - list, create, enable, and disable recurring schedules and delivery history
 - `GET/POST /api/admin/notifications/content-files` - list and permanently store validated JSON/CSV/TXT message libraries. JSON uploads may be a flat array of `{ "title": "...", "body": "..." }` entries, an `{ "entries": [...] }` wrapper, or the sectioned catalog shape with `sections[].entries[]`; UTF-8 BOMs are accepted.
+- `POST /api/admin/rebalance-random-keys` - authenticated redistribution of active meme random keys.
 
 The admin token is not bundled into the frontend. Type it into the `/admin` backend panel when you want to manage R2/D1 content.
+
+`GET /api/random-meme` accepts an optional comma-separated `exclude` list
+(maximum 50 meme IDs). The endpoint selects from a randomized candidate
+window, falls back when all eligible memes are excluded, and returns
+`Cache-Control: no-store, no-cache, must-revalidate, max-age=0`.
 
 Library-backed schedules require only a time, timezone/days, and an uploaded
 content file. At delivery time, the notification Worker reads the R2 library

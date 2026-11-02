@@ -20,11 +20,19 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const nsfwParam = url.searchParams.get("nsfw");
   const allowNsfw = nsfwParam === "1" || nsfwParam?.toLowerCase() === "true";
-  const meme = await randomMemeOrFallback(env, { nsfw: allowNsfw });
+  const excludeIds = (url.searchParams.get("exclude") || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .slice(0, 50);
+  const meme = await randomMemeOrFallback(env, { nsfw: allowNsfw, excludeIds });
   return json(
     { meme },
     {
-      headers: CORS_HEADERS,
+      headers: {
+        ...CORS_HEADERS,
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      },
     }
   );
 };

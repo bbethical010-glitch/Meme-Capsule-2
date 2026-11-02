@@ -178,7 +178,7 @@ Public random meme:
 User taps Spawn Another
   -> frontend calls getRandomMeme()
   -> local active admin drafts are checked first during development
-  -> deployed app calls GET /api/random-meme
+  -> deployed app calls GET /api/random-meme?exclude=<recent-meme-ids>
   -> Cloudflare Function queries D1 active memes via binding
   -> one approved meme is returned
 ```
@@ -240,7 +240,7 @@ Destructive actions use the meme ID stored on the report rather than trusting a
 browser-supplied target. The dashboard requires `ADMIN_API_TOKEN` and asks for
 confirmation before removing or blacklisting content.
 
-Public routes (`/api/random-meme`, `/api/daily-meme`, `/api/memes/random`) never use the admin token. They only return rows with `status = 'active'`, `is_active = 1`, and an authoritative finalization in `meme_curation_final` with `corpus_status = 'keep'`. By default, NSFW content (`is_nsfw = 1`) is strictly excluded (`AND (m.is_nsfw IS NULL OR m.is_nsfw = 0)`). Clients can request NSFW-inclusive results by supplying `?nsfw=1`. All unfinalized or excluded memes are maintained in `status = 'archived'` (`is_active = 0`) and are excluded at the SQL query level.
+Public routes (`/api/random-meme`, `/api/daily-meme`, `/api/memes/random`) never use the admin token. They only return rows with `status = 'active'`, `is_active = 1`, and an authoritative finalization in `meme_curation_final` with `corpus_status = 'keep'`. By default, NSFW content (`is_nsfw = 1`) is strictly excluded (`AND (m.is_nsfw IS NULL OR m.is_nsfw = 0)`). Clients can request NSFW-inclusive results by supplying `?nsfw=1`; `/api/random-meme` also accepts up to 50 comma-separated recent IDs through `?exclude=...` and explicitly disables caching. All unfinalized or excluded memes are maintained in `status = 'archived'` (`is_active = 0`) and are excluded at the SQL query level.
 
 ## Authoritative Resolution & Active Pool Synchronization
 
@@ -256,6 +256,10 @@ Human Layer 0 curation is a three-judge majority workflow. Judges 1-3 each have 
 `meme_curation_final` is limited to `keep` and `excluded`; duplicate and review_later outcomes plus resolved topics/tone/mechanisms are stored directly on `memes`. The additive Migration 014 adds `duplicate_of`, `topics`, `tone`, and `humour_mechanisms`. Historical migrations are unchanged. Apply migration 014 before deploying the updated Pages Functions.
 
 Public routes (`/api/random-meme`, `/api/daily-meme`, `/api/memes/random`) continue to require `status='active'`, `is_active=1`, and a `meme_curation_final` row with `corpus_status='keep'`. Duplicate, review_later, excluded, unfinalized, and NSFW-filtered content remains ineligible for public delivery.
+
+The authenticated `POST /api/admin/rebalance-random-keys` endpoint redistributes
+`memes.random_key` for active rows with SQLite's normalized random expression.
+This is an occasional maintenance operation, not part of request-time delivery.
 
 ## Google Drive Workflow
 
