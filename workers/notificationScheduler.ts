@@ -51,9 +51,61 @@ const localParts = (date: Date, timezone: string) => {
 
 const minuteOffsets = [-2, -1, 0];
 
-const pickContent = async (env: Env, schedule: ScheduleRow) => {
-  if (!schedule.content_file_path) return { title: schedule.title, body: schedule.body };
-  const object = await env.MEMES_BUCKET.get(schedule.content_file_path);
+type NotificationContent = { title: string; body: string };
+
+const normalizeContent = (value: unknown): NotificationContent[] => {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const item = entry as Record<string, unknown>;
+      const title = typeof item.title === "string" ? item.title.trim() : "";
+      const body = typeof item.body === "string"
+        ? item.body.trim()
+        : typeof item.message === "string"
+          ? item.message.trim()
+          : [item.header, item.subtitle]
+            .filter((part): part is string => typeof part === "string")
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .join("\n");
+      return title && body ? [{ title, body }] : [];
+    });
+  }
+  if (!value || typeof value !== "object") return [];
+  const document = value as Record<string, unknown>;
+  if (Array.isArray(document.entries)) return normalizeContent(document.entries);
+  if (!Array.isArray(document.sections)) return [];
+  return document.sections.flatMap((section) => {
+    if (!section || typeof section !== "object") return [];
+    const item = section as Record<string, unknown>;
+    const title = typeof item.name === "string"
+      ? item.name.trim()
+      : typeof item.title === "string"
+        ? item.title.trim()
+        : "";
+    return title && Array.isArray(item.entries)
+      ? normalizeContent(item.entries.map((entry) => (
+        entry && typeof entry === "object"
+          ? { ...(entry as Record<string, unknown>), title }
+          : { title, body: entry }
+      )))
+      : [];
+  });
+};
+
+const pickContent = async (env: Env, schedule: ScheduleRow): Promise<NotificationContent> => {
+  let contentPath = schedule.content_file_path;
+  if (schedule.content_file_id && !contentPath) {
+    const file = await env.DB.prepare(
+      "SELECT storage_path FROM notification_content_files WHERE id = ?"
+    ).bind(schedule.content_file_id).first<{ storage_path: string }>();
+    contentPath = file?.storage_path || null;
+  }
+  if (schedule.content_file_id && !contentPath) {
+    throw new Error("Scheduled content library is not linked to an R2 object");
+  }
+  if (!contentPath) return { title: schedule.title, body: schedule.body };
+  const object = await env.MEMES_BUCKET.get(contentPath);
   if (!object) throw new Error("Scheduled content file is missing from R2");
   let parsed: unknown;
   try {
@@ -61,15 +113,7 @@ const pickContent = async (env: Env, schedule: ScheduleRow) => {
   } catch {
     throw new Error("Scheduled content file contains invalid JSON");
   }
-  const entries = (Array.isArray(parsed) ? parsed : [])
-    .filter((entry): entry is { title: string; body: string } =>
-      Boolean(entry) &&
-      typeof entry === "object" &&
-      typeof (entry as { title?: unknown }).title === "string" &&
-      typeof (entry as { body?: unknown }).body === "string" &&
-      (entry as { title: string }).title.trim().length > 0 &&
-      (entry as { body: string }).body.trim().length > 0
-    );
+  const entries = normalizeContent(parsed);
   if (!entries.length) throw new Error("Scheduled content file has no valid title/body entries");
   const randomBytes = new Uint32Array(1);
   crypto.getRandomValues(randomBytes);
