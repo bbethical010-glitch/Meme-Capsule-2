@@ -10,3 +10,4 @@ dist/
 .vscode/
 .knowledge/.env
 .knowledge/*.local
+*-firebase-adminsdk-*.json

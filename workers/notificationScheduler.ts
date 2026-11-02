@@ -22,6 +22,8 @@ interface ScheduleRow {
   days_of_week: string;
   target: string;
   topic: string | null;
+  content_file_id: string | null;
+  content_file_path: string | null;
   title: string;
   body: string;
   screen: string;
@@ -48,6 +50,15 @@ const localParts = (date: Date, timezone: string) => {
 };
 
 const minuteOffsets = [-2, -1, 0];
+
+const pickContent = async (env: Env, schedule: ScheduleRow) => {
+  if (!schedule.content_file_path) return { title: schedule.title, body: schedule.body };
+  const object = await env.MEMES_BUCKET.get(schedule.content_file_path);
+  if (!object) throw new Error("Scheduled content file is missing from R2");
+  const entries = JSON.parse(await object.text()) as Array<{ title: string; body: string }>;
+  if (!entries.length) throw new Error("Scheduled content file is empty");
+  return entries[Math.floor(Math.random() * entries.length)];
+};
 
 const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date, offset: number) => {
   const candidate = new Date(now.getTime() + offset * 60_000);
@@ -76,13 +87,14 @@ const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date, offs
   const errors: string[] = [];
   try {
     const { accessToken, projectId } = await getFcmAuth(env);
+    const content = await pickContent(env, schedule);
     if (schedule.target === "topic") {
       attempted = 1;
       const result = await sendFcmMessage(env, accessToken, {
         topic: schedule.topic || "",
         projectId,
-        title: schedule.title,
-        body: schedule.body,
+        title: (content.title || schedule.title).slice(0, 120),
+        body: content.body,
         data: { screen: schedule.screen, action: schedule.screen === "drop" ? "drop" : "navigate" },
       });
       if (result.success) sent = 1;
@@ -97,8 +109,8 @@ const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date, offs
         const results = await Promise.all(batch.map((row) => sendFcmMessage(env, accessToken, {
           token: row.token,
           projectId,
-          title: schedule.title,
-          body: schedule.body,
+          title: (content.title || schedule.title).slice(0, 120),
+          body: content.body,
           data: { screen: schedule.screen, action: schedule.screen === "drop" ? "drop" : "navigate" },
         })));
         for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
@@ -136,9 +148,11 @@ const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date, offs
 const runSchedules = async (env: Env): Promise<void> => {
   const schedules = (await env.DB.prepare(`
     SELECT s.id, s.message_id, s.time_local, s.timezone, s.days_of_week, s.target,
-           s.topic, m.title, m.body, m.screen
+           s.topic, s.content_file_id, f.storage_path AS content_file_path,
+           m.title, m.body, m.screen
     FROM notification_schedules s
     INNER JOIN notification_messages m ON m.id = s.message_id
+    LEFT JOIN notification_content_files f ON f.id = s.content_file_id
     WHERE s.is_enabled = 1 AND m.is_active = 1
   `).all<ScheduleRow>()).results || [];
   const now = new Date();

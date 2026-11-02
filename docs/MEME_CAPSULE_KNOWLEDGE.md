@@ -141,6 +141,7 @@ Modern internet culture is trapped inside social media feeds (Instagram, TikTok,
 - **Multimodal AI Pre-Curator Loop (`/ai-judge`):** Gemini Vision and Python NVIDIA NIM Llama 3.2 11B Vision pipeline categorizing humor mechanisms, topics, and safety.
 - **Firebase Push Notification Engine:** Cloudflare Pages edge endpoints register Android device tokens in D1 (`notification_tokens`), sign Google RS256 JWTs with Web Crypto, cache the OAuth2 bearer token for 50 minutes, and dispatch FCM HTTP v1 messages to all active devices, topics, or a single test token. The `/admin` Push Notifications control room provides device metrics, a live phone preview, confirmation, and dispatch logs.
 - **Scheduled Notification Engine:** Migration 023 stores reusable notification messages, timezone-aware recurring schedules, and idempotent delivery-run records. The separate `meme-capsule-notifications` Worker runs every minute, evaluates schedules without relying on the admin page, dispatches through the shared FCM sender, deactivates unregistered tokens, and records delivery results.
+- **Random Notification Libraries:** Migration 024 adds persistent R2-backed content libraries. The admin Scheduled Drops UI accepts validated JSON/CSV files with up to seven unique titles; each schedule can attach a library and the Worker randomly chooses an entry when sending.
 
 ### Q7: How is it technically built?
 - **Mobile Native Wrapper:** Android app built with **Capacitor 8** wrapping a Vite 6 / React 19 SPA, extended with a custom Java native bridge (`MainActivity.java`).
@@ -875,4 +876,3 @@ CRITICAL RULES & CONSTRAINTS:
 4. CLEAR CODEBASE BOUNDARIES: Maintain strict separation between Mobile APK, Promo Web, and Edge Backend.
 =========================================================
 ```
-
