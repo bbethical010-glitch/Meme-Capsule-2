@@ -1,5 +1,5 @@
 /**
- * GET/POST /api/admin/notifications/schedules
+ * GET/POST/PATCH/DELETE /api/admin/notifications/schedules
  * Manages timezone-aware recurring notification schedules.
  */
 import type { PagesFunction } from "../../../_shared/pages";
@@ -23,10 +23,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
     const result = await env.DB.prepare(`
       SELECT s.id, s.message_id, s.time_local, s.timezone, s.days_of_week, s.target,
-             s.topic, s.is_enabled, s.created_at, s.updated_at,
+             s.topic, s.content_file_id, f.file_name AS content_file_name,
+             s.is_enabled, s.created_at, s.updated_at,
              m.title, m.body, m.screen
       FROM notification_schedules s
       INNER JOIN notification_messages m ON m.id = s.message_id
+      LEFT JOIN notification_content_files f ON f.id = s.content_file_id
       ORDER BY s.time_local ASC
     `).all();
     const runs = await env.DB.prepare(`
@@ -50,6 +52,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     days_of_week?: string;
     target?: string;
     topic?: string;
+    content_file_id?: string;
     is_enabled?: boolean;
   };
 
@@ -79,11 +82,16 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       "SELECT id FROM notification_messages WHERE id = ? AND is_active = 1"
     ).bind(payload.message_id).first();
     if (!message) return json({ error: "Active message not found" }, { status: 400 });
+    if (payload.content_file_id) {
+      const file = await env.DB.prepare("SELECT id FROM notification_content_files WHERE id = ?")
+        .bind(payload.content_file_id).first();
+      if (!file) return json({ error: "Content file not found" }, { status: 400 });
+    }
     const id = crypto.randomUUID();
     await env.DB.prepare(`
       INSERT INTO notification_schedules
-        (id, message_id, time_local, timezone, days_of_week, target, topic, is_enabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (id, message_id, time_local, timezone, days_of_week, target, topic, is_enabled, content_file_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       id,
       payload.message_id,
@@ -92,7 +100,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       [...new Set(dayValues)].sort().join(","),
       target,
       payload.topic?.trim() || null,
-      payload.is_enabled === false ? 0 : 1
+      payload.is_enabled === false ? 0 : 1,
+      payload.content_file_id || null
     ).run();
     return json({ success: true, id }, { status: 201 });
   } catch (error) {
@@ -120,5 +129,26 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
     return json({ success: true });
   } catch (error) {
     return handleD1Error(error, "Failed to update notification schedule");
+  }
+};
+
+export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
+  const authError = requireAdmin(request, env);
+  if (authError) return authError;
+  let payload: { id?: string };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  if (!payload.id) return json({ error: "id is required" }, { status: 400 });
+  try {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM notification_delivery_runs WHERE schedule_id = ?").bind(payload.id),
+      env.DB.prepare("DELETE FROM notification_schedules WHERE id = ?").bind(payload.id),
+    ]);
+    return json({ success: true });
+  } catch (error) {
+    return handleD1Error(error, "Failed to delete notification schedule");
   }
 };

@@ -70,6 +70,7 @@ Meme Capsule operates across three decoupled codebases:
   - Event telemetry recalculation engine and CSV/Excel exports.
   - Push Notifications control room with FCM composer, live Android preview, device stats, target selection, confirmation, and dispatch logs.
   - Scheduled Drops panel with reusable message templates and recurring timezone-aware delivery schedules.
+  - Permanent JSON/CSV content-library upload with random message selection and per-schedule delete controls.
 - **Moderation Dashboard (`/reports`)**:
   - Token-protected review interface for user-reported content.
   - One-click meme archiving and addition to `content_blacklist`.
@@ -120,6 +121,7 @@ Admin backend routes:
 - `GET /api/admin/notifications/stats` - return registered-device totals and app/platform breakdowns
 - `GET/POST /api/admin/notifications/messages` - list and create reusable notification messages
 - `GET/POST/PATCH /api/admin/notifications/schedules` - list, create, enable, and disable recurring schedules and delivery history
+- `GET/POST /api/admin/notifications/content-files` - list and permanently store validated JSON/CSV message libraries
 
 The admin token is not bundled into the frontend. Type it into the `/admin` backend panel when you want to manage R2/D1 content.
 

@@ -164,6 +164,12 @@ tables every minute and continues operating when `/admin` is closed. Failed
 or interrupted occurrences remain retryable during a short delayed-cron window;
 the admin Scheduled Drops view exposes their stored error and delivery counts.
 
+Migration 024 adds `notification_content_files`, which stores metadata for
+validated JSON/CSV message libraries whose normalized contents are retained
+permanently in R2. A schedule may reference one file; the Worker randomly
+selects one entry at delivery time, while retaining the schedule's message as
+the fallback.
+
 ## API Flow
 
 Public random meme:
