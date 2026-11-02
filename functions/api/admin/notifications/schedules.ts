@@ -53,28 +53,6 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     is_enabled?: boolean;
   };
 
-  export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
-    const authError = requireAdmin(request, env);
-    if (authError) return authError;
-    let payload: { id?: string; is_enabled?: boolean };
-    try {
-      payload = (await request.json()) as typeof payload;
-    } catch {
-      return json({ error: "Invalid JSON body" }, { status: 400 });
-    }
-    if (!payload.id || typeof payload.is_enabled !== "boolean") {
-      return json({ error: "id and is_enabled are required" }, { status: 400 });
-    }
-    try {
-      const result = await env.DB.prepare(
-        "UPDATE notification_schedules SET is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).bind(payload.is_enabled ? 1 : 0, payload.id).run();
-      if (!result.meta.changes) return json({ error: "Schedule not found" }, { status: 404 });
-      return json({ success: true });
-    } catch (error) {
-      return handleD1Error(error, "Failed to update notification schedule");
-    }
-  };
   try {
     payload = (await request.json()) as typeof payload;
   } catch {
@@ -119,5 +97,28 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     return json({ success: true, id }, { status: 201 });
   } catch (error) {
     return handleD1Error(error, "Failed to create notification schedule");
+  }
+};
+
+export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
+  const authError = requireAdmin(request, env);
+  if (authError) return authError;
+  let payload: { id?: string; is_enabled?: boolean };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  if (!payload.id || typeof payload.is_enabled !== "boolean") {
+    return json({ error: "id and is_enabled are required" }, { status: 400 });
+  }
+  try {
+    const result = await env.DB.prepare(
+      "UPDATE notification_schedules SET is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).bind(payload.is_enabled ? 1 : 0, payload.id).run();
+    if (!result.meta.changes) return json({ error: "Schedule not found" }, { status: 404 });
+    return json({ success: true });
+  } catch (error) {
+    return handleD1Error(error, "Failed to update notification schedule");
   }
 };
