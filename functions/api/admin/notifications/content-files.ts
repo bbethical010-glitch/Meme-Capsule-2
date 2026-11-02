@@ -33,7 +33,46 @@ const parseCsv = (text: string): ContentEntry[] => {
   }));
 };
 
+const parseCatalogText = (text: string): ContentEntry[] => {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const entries: ContentEntry[] = [];
+  let sectionTitle = "";
+  let pendingNumber = false;
+  let pendingLines: string[] = [];
+
+  const flush = () => {
+    if (sectionTitle && pendingLines.length >= 2) {
+      entries.push({
+        title: sectionTitle.slice(0, 120),
+        body: pendingLines.slice(0, 2).join("\n").slice(0, 300),
+      });
+    }
+    pendingLines = [];
+    pendingNumber = false;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line === "#" || /^main header$/i.test(line) || /^subtitle\s*\/\s*body copy$/i.test(line)) continue;
+    const sectionMatch = line.match(/^[^—-]+?\s+[—-]\s+(.+)$/);
+    if (sectionMatch && !/^\d/.test(line)) {
+      flush();
+      sectionTitle = sectionMatch[1].trim();
+      continue;
+    }
+    if (/^\d{1,2}$/.test(line)) {
+      flush();
+      pendingNumber = true;
+      continue;
+    }
+    if (pendingNumber && pendingLines.length < 2) pendingLines.push(line);
+  }
+  flush();
+  return entries.filter((entry) => entry.body);
+};
+
 const parseFile = (name: string, text: string): ContentEntry[] => {
+  if (name.toLowerCase().endsWith(".txt")) return parseCatalogText(text);
   if (name.toLowerCase().endsWith(".json")) {
     try {
       const parsed = JSON.parse(text);
