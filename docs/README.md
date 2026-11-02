@@ -70,7 +70,7 @@ Meme Capsule operates across three decoupled codebases:
   - Event telemetry recalculation engine and CSV/Excel exports.
   - Push Notifications control room with FCM composer, live Android preview, device stats, target selection, confirmation, and dispatch logs.
   - Scheduled Drops panel with reusable message templates and recurring timezone-aware delivery schedules.
-  - Permanent JSON/CSV content-library upload with random message selection and per-schedule delete controls.
+  - Permanent JSON/CSV/TXT content-library upload with random message selection and per-schedule delete controls. Catalog TXT files may use section headings, numbered entries, and two lines per entry.
 - **Moderation Dashboard (`/reports`)**:
   - Token-protected review interface for user-reported content.
   - One-click meme archiving and addition to `content_blacklist`.
