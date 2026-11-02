@@ -11,6 +11,7 @@ interface Env {
   DB: D1Database;
   MEMES_BUCKET: R2Bucket;
   FIREBASE_SERVICE_ACCOUNT?: string;
+  NOTIFICATION_WORKER_TOKEN?: string;
 }
 
 interface ScheduleRow {
@@ -46,21 +47,33 @@ const localParts = (date: Date, timezone: string) => {
   };
 };
 
-const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date) => {
-  const local = localParts(now, schedule.timezone);
+const minuteOffsets = [-2, -1, 0];
+
+const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date, offset: number) => {
+  const candidate = new Date(now.getTime() + offset * 60_000);
+  const local = localParts(candidate, schedule.timezone);
   if (local.time !== schedule.time_local || !schedule.days_of_week.split(",").includes(local.weekday)) return;
 
   const occurrenceKey = `${local.date}T${schedule.time_local}`;
   const claim = await env.DB.prepare(`
-    INSERT OR IGNORE INTO notification_delivery_runs
+    INSERT INTO notification_delivery_runs
       (id, schedule_id, occurrence_key, status)
     VALUES (?, ?, ?, 'processing')
+    ON CONFLICT(schedule_id, occurrence_key) DO UPDATE SET
+      status = 'processing',
+      error = NULL,
+      started_at = CURRENT_TIMESTAMP,
+      completed_at = NULL
+    WHERE notification_delivery_runs.status = 'failed'
+       OR (notification_delivery_runs.status = 'processing'
+           AND notification_delivery_runs.started_at < datetime('now', '-5 minutes'))
   `).bind(crypto.randomUUID(), schedule.id, occurrenceKey).run();
   if (!claim.meta.changes) return;
 
   let attempted = 0;
   let sent = 0;
   let stalePruned = 0;
+  const errors: string[] = [];
   try {
     const { accessToken, projectId } = await getFcmAuth(env);
     if (schedule.target === "topic") {
@@ -73,6 +86,7 @@ const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date) => {
         data: { screen: schedule.screen, action: schedule.screen === "drop" ? "drop" : "navigate" },
       });
       if (result.success) sent = 1;
+      else if (result.error) errors.push(result.error);
     } else {
       const tokens = (await env.DB.prepare(
         "SELECT token FROM notification_tokens WHERE is_active = 1"
@@ -90,6 +104,7 @@ const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date) => {
         for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
           const result = results[resultIndex];
           if (result.success) sent++;
+          else if (result.error) errors.push(result.error);
           if (result.unregistered) {
             stalePruned++;
             await env.DB.prepare(
@@ -99,12 +114,13 @@ const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date) => {
         }
       }
     }
+    const status = sent === attempted ? "sent" : sent > 0 ? "partial" : "failed";
     await env.DB.prepare(`
       UPDATE notification_delivery_runs
-      SET status = 'sent', total_attempted = ?, total_sent = ?, stale_pruned = ?,
+      SET status = ?, total_attempted = ?, total_sent = ?, stale_pruned = ?, error = ?,
           completed_at = CURRENT_TIMESTAMP
       WHERE schedule_id = ? AND occurrence_key = ?
-    `).bind(attempted, sent, stalePruned, schedule.id, occurrenceKey).run();
+    `).bind(status, attempted, sent, stalePruned, errors.slice(0, 5).join(" | ") || null, schedule.id, occurrenceKey).run();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Scheduled dispatch failed";
     await env.DB.prepare(`
@@ -117,16 +133,32 @@ const dispatchSchedule = async (env: Env, schedule: ScheduleRow, now: Date) => {
   }
 };
 
+const runSchedules = async (env: Env): Promise<void> => {
+  const schedules = (await env.DB.prepare(`
+    SELECT s.id, s.message_id, s.time_local, s.timezone, s.days_of_week, s.target,
+           s.topic, m.title, m.body, m.screen
+    FROM notification_schedules s
+    INNER JOIN notification_messages m ON m.id = s.message_id
+    WHERE s.is_enabled = 1 AND m.is_active = 1
+  `).all<ScheduleRow>()).results || [];
+  const now = new Date();
+  await Promise.all(schedules.flatMap((schedule) =>
+    minuteOffsets.map((offset) => dispatchSchedule(env, schedule, now, offset))
+  ));
+};
+
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    const schedules = (await env.DB.prepare(`
-      SELECT s.id, s.message_id, s.time_local, s.timezone, s.days_of_week, s.target,
-             s.topic, m.title, m.body, m.screen
-      FROM notification_schedules s
-      INNER JOIN notification_messages m ON m.id = s.message_id
-      WHERE s.is_enabled = 1 AND m.is_active = 1
-    `).all<ScheduleRow>()).results || [];
-    const now = new Date();
-    await Promise.all(schedules.map((schedule) => dispatchSchedule(env, schedule, now)));
+    await runSchedules(env);
+  },
+
+  async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method !== "POST" || request.headers.get("X-Notification-Worker-Token") !== env.NOTIFICATION_WORKER_TOKEN) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    await runSchedules(env);
+    return new Response(JSON.stringify({ success: true, timestamp: new Date().toISOString() }), {
+      headers: { "Content-Type": "application/json" },
+    });
   },
 };

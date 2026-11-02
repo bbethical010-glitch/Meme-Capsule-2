@@ -80,6 +80,7 @@
 button.schedule-item { cursor: pointer; }
 .schedule-item.selected { border-color: var(--secondary); box-shadow: 3px 3px var(--secondary); }
 .schedule-item span { color: var(--on-surface-variant); }
+.schedule-error { color: var(--error) !important; overflow-wrap: anywhere; }
 @media (max-width: 800px) {
   .push-console { padding: 16px; }
   .push-heading, .push-grid { grid-template-columns: 1fr; display: grid; }

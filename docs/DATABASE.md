@@ -160,7 +160,9 @@ Migration 023 adds `notification_messages` for reusable title/body/deep-link
 templates, `notification_schedules` for enabled recurring times, weekdays,
 audience, and IANA timezone, and `notification_delivery_runs` for idempotent
 per-occurrence audit records. The separate notification Worker evaluates these
-tables every minute and continues operating when `/admin` is closed.
+tables every minute and continues operating when `/admin` is closed. Failed
+or interrupted occurrences remain retryable during a short delayed-cron window;
+the admin Scheduled Drops view exposes their stored error and delivery counts.
 
 ## API Flow
 

@@ -14,6 +14,7 @@ export type Env = {
   FIREBASE_CLIENT_EMAIL?: string;
   FIREBASE_PRIVATE_KEY?: string;
   FIREBASE_SERVICE_ACCOUNT?: string;
+  NOTIFICATION_WORKER_TOKEN?: string;
 };
 
 export interface CatUser {
