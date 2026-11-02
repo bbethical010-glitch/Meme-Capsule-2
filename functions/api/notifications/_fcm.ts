@@ -86,7 +86,9 @@ export async function getGoogleOAuthToken(
 }
 
 export interface SendPushParams {
-  token: string;
+  token?: string;
+  topic?: string;
+  projectId?: string;
   title: string;
   body: string;
   data?: Record<string, string>;
@@ -97,14 +99,18 @@ export async function sendFcmMessage(
   accessToken: string,
   params: SendPushParams
 ): Promise<{ success: boolean; unregistered?: boolean; error?: string }> {
-  const projectId = env.FIREBASE_PROJECT_ID;
+  const projectId = params.projectId || env.FIREBASE_PROJECT_ID;
   if (!projectId) {
     return { success: false, error: "FIREBASE_PROJECT_ID not configured" };
   }
 
+  if (!params.token && !params.topic) {
+    return { success: false, error: "FCM token or topic is required" };
+  }
+
   const payload = {
     message: {
-      token: params.token,
+      ...(params.topic ? { topic: params.topic } : { token: params.token }),
       notification: {
         title: params.title,
         body: params.body,
