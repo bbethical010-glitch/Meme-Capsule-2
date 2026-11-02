@@ -46,6 +46,7 @@ The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been perma
   - `GET /api/admin/notifications/stats`: Protected active-device and app-version/platform breakdown.
   - `GET/POST /api/admin/notifications/messages`: Admin-managed reusable notification message templates.
   - `GET/POST /api/admin/notifications/schedules`: Admin-managed timezone-aware recurring schedules and delivery history.
+  - `GET/POST /api/admin/notifications/content-files`: Admin upload/list endpoints for persistent random notification content libraries.
   - `POST /api/analytics/events`: Authenticated, consented Android event ingestion with event-id deduplication.
   - `GET /api/analytics/overview`, `GET /api/analytics/trends`: Curator-session-protected live Android KPI reads.
   - `GET /api/analytics/retention`, `/funnel`, `/content`, `/audience`, `/ai-insights`: Aggregate dashboard analytics for the remaining live tabs.
@@ -92,6 +93,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
 15. `013_add_nsfw_flag.sql`, `014_add_resolved_curation_fields.sql`, `015_android_analytics_events.sql`, `016_android_analytics_schema_version.sql`, `017_android_analytics_query_indexes.sql`, and `018_android_analytics_deletion_audit.sql`: NSFW metadata, resolved curation fields, isolated consented Android telemetry, versioned analytics payloads, KPI indexes, and deletion auditing.
 16. `021_create_device_tokens.sql` and `022_rename_device_tokens_to_notification_tokens.sql`: FCM device registration storage and the canonical `notification_tokens` table name.
 17. `023_scheduled_notifications.sql`: Reusable notification messages, recurring schedules, and idempotent delivery-run audit records.
+18. `024_notification_content_files.sql`: Persistent R2-backed JSON/CSV content libraries attachable to schedules.
 
 ### C. Cloudflare R2 Media Storage
 - Bucket `memes` configured with public access enabled.
@@ -120,6 +122,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
 - **Worker trigger protection**: Manual analytics-worker `POST` execution now requires the separate `ANALYTICS_WORKER_TOKEN`; scheduled execution remains internal.
 - **Scheduled notifications**: `workers/notificationScheduler.ts` runs every minute, evaluates D1 schedules in their configured IANA timezones, claims each occurrence once, dispatches through FCM, deactivates unregistered tokens, and records delivery outcomes. It is independent of the admin page.
 - **Scheduler diagnostics**: Failed runs are retried safely within a short delayed-cron window, and the admin Scheduled Drops panel displays attempted/sent counts and stored FCM or configuration errors.
+- **Random content libraries**: Admins can upload validated JSON/CSV libraries to R2, attach one to a schedule, and have the Worker randomly choose a title/body entry for each delivery. Libraries allow at most seven unique titles and enforce message length limits.
 - **Phase 3 query performance**: Migration 017 adds composite indexes for time-bounded Android KPI queries. Overview and trends responses now include explicit freshness and empty-state metadata.
 - **Phase 4 deletion lifecycle**: Migration 018 adds `android_analytics_deletion_audit`; superadmins can process verified anonymous-hash deletion requests through `POST /api/analytics/deletion`, with audit listing through the protected `GET` route.
 - **Phase 4 consent lineage**: Migration 019 stores `consent_version` with each Android event, defaulting legacy clients to `v1`. Consent denial/revocation remains local and must not emit behavioral telemetry.
