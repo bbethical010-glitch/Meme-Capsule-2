@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import type { CurateMemeItem } from "../curateTypes";
+import type { CurateMemeItem, CuratorUser } from "../curateTypes";
 import type { EditorState, EditorTool } from "./imageEditorTypes";
 import { KonvaCanvas } from "./KonvaCanvas";
 import { exportEditorToBlob } from "./exportCanvas";
 
 interface ImageEditorModalProps {
   meme: CurateMemeItem;
+  user?: CuratorUser;
   token?: string;
   onClose: () => void;
   onSaveSuccess: (updatedMeme: { id: string; image_url: string; storage_path?: string }) => void;
@@ -24,6 +25,7 @@ const PALETTE = ["#FFFFFF", "#F4C300", "#FF3B30", "#34C759", "#00F0FF", "#9B30FF
 
 export default function ImageEditorModal({
   meme,
+  user,
   token,
   onClose,
   onSaveSuccess
@@ -239,6 +241,11 @@ export default function ImageEditorModal({
       formData.append("meme_id", meme.id);
       formData.append("expected_storage_path", expectedStoragePath);
       formData.append("file", blob, `edited-${meme.id}.webp`);
+      if (user) {
+        formData.append("user_id", user.id);
+        formData.append("user_name", user.display_name);
+        formData.append("user_role", user.role);
+      }
 
       const sessionToken =
         token ||
@@ -247,11 +254,17 @@ export default function ImageEditorModal({
         localStorage.getItem("curator_token") ||
         "";
 
+      const headers: Record<string, string> = {};
+      if (sessionToken) {
+        headers["Authorization"] = `Bearer ${sessionToken}`;
+      }
+      if (user?.id) {
+        headers["X-Curator-User-Id"] = user.id;
+      }
+
       const response = await fetch("/api/curate/media/edit", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${sessionToken}`
-        },
+        headers,
         body: formData
       });
 

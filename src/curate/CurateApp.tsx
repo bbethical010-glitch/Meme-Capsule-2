@@ -2355,6 +2355,7 @@ export default function CurateApp() {
         >
           <ImageEditorModal
             meme={currentMeme}
+            user={user || undefined}
             token={token || undefined}
             onClose={() => setShowImageEditor(false)}
             onSaveSuccess={handleEditorSaveSuccess}
