@@ -241,3 +241,69 @@ export const retryIngestionItems = async (adminToken: string, jobIds: string[]) 
   });
   return parseJsonResponse<{ success: boolean; reset_jobs: number; batches: IngestionBatchStatus[] }>(response);
 };
+
+export type VaultViewMode =
+  | "extra-large-grid"
+  | "medium-grid"
+  | "compact-grid"
+  | "list"
+  | "detailed-list";
+
+export type VaultQuery = {
+  page?: number;
+  per_page?: number;
+  q?: string;
+  status?: "all" | "active" | "draft" | "archived";
+  curation_status?: "all" | "keep" | "excluded" | "review_later" | "unreviewed";
+  nsfw?: "all" | "safe" | "nsfw";
+  sort_by?: "uploaded_at" | "title" | "id" | "likes_count";
+  sort_dir?: "asc" | "desc";
+  stats?: boolean;
+};
+
+export type VaultStats = {
+  total: number;
+  active: number;
+  drafts: number;
+  archived: number;
+  excluded: number;
+  nsfw: number;
+};
+
+export type VaultResponse = {
+  memes: AdminMeme[];
+  pagination: {
+    page: number;
+    per_page: number;
+    total_count: number;
+    total_pages: number;
+  };
+  stats?: VaultStats;
+  config?: {
+    hasR2PublicUrl?: boolean;
+    hasDatabase?: boolean;
+  };
+};
+
+export const fetchVaultMemes = async (adminToken: string, query?: VaultQuery): Promise<VaultResponse> => {
+  const params = new URLSearchParams();
+  if (query) {
+    if (query.page) params.set("page", String(query.page));
+    if (query.per_page) params.set("per_page", String(query.per_page));
+    if (query.q) params.set("q", query.q);
+    if (query.status && query.status !== "all") params.set("status", query.status);
+    if (query.curation_status && query.curation_status !== "all") params.set("curation_status", query.curation_status);
+    if (query.nsfw && query.nsfw !== "all") params.set("nsfw", query.nsfw);
+    if (query.sort_by) params.set("sort_by", query.sort_by);
+    if (query.sort_dir) params.set("sort_dir", query.sort_dir);
+    if (query.stats !== undefined) params.set("stats", query.stats ? "1" : "0");
+  }
+
+  const queryString = params.toString();
+  const url = `/api/admin/memes${queryString ? `?${queryString}` : ""}`;
+  const response = await fetch(url, {
+    headers: authHeaders(adminToken),
+    cache: "no-store"
+  });
+  return parseJsonResponse<VaultResponse>(response);
+};

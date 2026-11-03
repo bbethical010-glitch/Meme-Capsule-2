@@ -253,12 +253,43 @@ modes, contextual details panel, immutable normal IDs, explicit lifecycle/curati
 semantics, and visible partial bulk-action results without weakening the public
 final-`keep` gate.
 
-### Verified history and status
+### Implementation record
 
-- The current Admin Vault still loads all returned rows and filters/slices them in
-  React; no Phase 5 server-side contract or five-mode Vault implementation is
-  present.
-- **Status:** Pending; not started.
+- Enhanced `GET /api/admin/memes` with parameterized query parsing for `page`,
+  `per_page` (clamped between 1 and 100), search `q` (title, id, category, tags),
+  `status`, `curation_status`, `nsfw`, and whitelisted sorting (`uploaded_at`,
+  `title`, `id`, `likes_count`). Added a single-scan corpus statistics aggregation
+  in D1 to calculate exact counts across all statuses without loading the entire
+  corpus into memory. Backward compatibility for legacy callers is preserved.
+- Added server-side validation in `PATCH /api/admin/memes` rejecting any modification
+  where `meme.id !== originalId` with HTTP 400. In `src/admin/AdminApp.tsx`, the
+  edit form locks the Meme ID field (`readOnly`/`disabled`) when editing existing memes.
+- Implemented the 5 approved view modes in `src/admin/AdminApp.tsx` and
+  `src/admin/admin.css`:
+  1. Extra-Large Grid (`extra-large-grid`)
+  2. Medium Grid (`medium-grid`)
+  3. Compact Grid (`compact-grid`)
+  4. List (`list`)
+  5. Detailed List (`detailed-list`)
+  View mode choice is persisted across sessions in `localStorage`.
+- Added a Contextual Details Panel (Inspector) for inspecting single memes with
+  high-res previews, immutable ID copy actions, lifecycle/curation badges,
+  metadata fields, deep-link Re-Curate (`/curate#id=...`), Archive/Restore,
+  and Hard Delete. Multi-select mode provides bulk action summary and controls.
+- Hard delete in `functions/api/admin/memes/hard-delete.ts` checks both
+  `MEMES_BUCKET` and `R2_BUCKET` bindings and returns per-item success and failure
+  records.
+- Added unit test suite `tests/vault.test.ts` with `npm run test:vault` script in
+  `package.json`.
+
+### Verification and status
+
+- `npm run test:vault`: passed 5/5.
+- `npm run test:ingestion`: passed 4/4.
+- `npm run test:analytics`: passed 5/5.
+- `node --test tests/curationConsensus.test.mjs`: passed 9/9.
+- `npm run build`: passed (all 1631 modules bundled into `dist/`).
+- **Status:** Completed locally. No migrations or production mutations required.
 
 ## Admin Overhaul Phase 6 — Human-judge image editor
 

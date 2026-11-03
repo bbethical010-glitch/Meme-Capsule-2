@@ -10,7 +10,10 @@ import {
   saveBackendMeme,
   syncR2ToD1,
   uploadBackendMemeFile,
-  hardDeleteBackendMemes
+  hardDeleteBackendMemes,
+  fetchVaultMemes,
+  type VaultViewMode,
+  type VaultStats
 } from "../lib/adminApi";
 import {
   AdminMeme,
@@ -51,26 +54,46 @@ const fromFormState = (form: FormState): AdminMeme =>
 interface MemeRowProps {
   meme: AdminMeme;
   backendMode: boolean;
+  viewMode: VaultViewMode;
   onEdit: (meme: AdminMeme) => void;
   onDelete: (id: string) => void;
+  onInspect: (meme: AdminMeme) => void;
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
   isArchivedView?: boolean;
   onHardDelete?: (id: string) => void;
 }
 
-const MemeRow = React.memo(function MemeRow({ meme, backendMode, onEdit, onDelete, isSelected, onToggleSelect, isArchivedView, onHardDelete }: MemeRowProps) {
+const MemeRow = React.memo(function MemeRow({
+  meme,
+  backendMode,
+  viewMode,
+  onEdit,
+  onDelete,
+  onInspect,
+  isSelected,
+  onToggleSelect,
+  isArchivedView,
+  onHardDelete
+}: MemeRowProps) {
+  const isExcluded = meme.curation_status === "excluded" || (meme as any).final_status === "excluded";
+  const isNsfw = Boolean((meme as any).is_nsfw);
+
   return (
-    <div className={`collection-row brutalist-border brutalist-shadow-black brutalist-interactive ${isSelected ? 'selected' : ''}`} onClick={() => onEdit(meme)}>
-      {isArchivedView && (
-        <div className="row-select" onClick={(e) => e.stopPropagation()}>
-          <input 
-            type="checkbox" 
-            checked={isSelected || false} 
-            onChange={() => onToggleSelect && onToggleSelect(meme.id)} 
-          />
-        </div>
-      )}
+    <div
+      className={`collection-row brutalist-border brutalist-shadow-black brutalist-interactive ${isSelected ? 'selected' : ''}`}
+      onClick={() => onInspect(meme)}
+      style={{ cursor: "pointer" }}
+    >
+      <div className="row-select" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={isSelected || false}
+          onChange={() => onToggleSelect && onToggleSelect(meme.id)}
+          aria-label={`Select ${meme.title || meme.id}`}
+        />
+      </div>
+
       <div className="thumb brutalist-border-sm">
         {meme.media_type === "video" ? (
           <video src={meme.url} muted preload="metadata" />
@@ -80,17 +103,18 @@ const MemeRow = React.memo(function MemeRow({ meme, backendMode, onEdit, onDelet
         <div className="overlay"></div>
         {!meme.url && <span className="material-symbols-outlined" style={{ zIndex: 2 }}>image</span>}
       </div>
+
       <div className="collection-meta">
-        <h4 style={{ textDecoration: meme.status === "archived" || meme.curation_status === "excluded" ? "line-through" : "none" }}>
+        <h4 style={{ textDecoration: meme.status === "archived" || isExcluded ? "line-through" : "none" }}>
           {meme.title || "Untitled Meme"}
         </h4>
         <div className="badge-row">
-          {meme.curation_status === "excluded" ? (
+          {isExcluded ? (
             <span className="badge brutalist-border-sm excluded">EXCLUDED</span>
           ) : (
             <span className={`badge brutalist-border-sm ${meme.status}`}>{meme.status}</span>
           )}
-          {Boolean((meme as any).is_nsfw) && (
+          {isNsfw && (
             <span
               className="badge brutalist-border-sm nsfw"
               style={{ background: "#dd0061", color: "#ffffff", borderColor: "#dd0061", fontWeight: 700 }}
@@ -104,37 +128,32 @@ const MemeRow = React.memo(function MemeRow({ meme, backendMode, onEdit, onDelet
         </div>
         <p className="row-id">ID: {meme.id}</p>
       </div>
-      <div className="row-actions">
+
+      <div className="row-actions" onClick={(e) => e.stopPropagation()}>
         <button
           type="button"
           className="brutalist-border-sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit(meme);
-          }}
+          title="Edit Meme"
+          onClick={() => onEdit(meme)}
         >
           <span className="material-symbols-outlined">edit</span> Edit
         </button>
         <button
           type="button"
           className="delete-btn brutalist-border-sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(meme.id);
-          }}
+          title={backendMode ? "Archive Meme" : "Delete Draft"}
+          onClick={() => onDelete(meme.id)}
         >
           <span className="material-symbols-outlined">{backendMode ? "archive" : "delete"}</span>
           {backendMode ? "Archv" : "Del"}
         </button>
-        {isArchivedView && onHardDelete && backendMode && (
+        {(isArchivedView || isExcluded) && onHardDelete && backendMode && (
           <button
             type="button"
             className="delete-btn brutalist-border-sm"
             style={{ backgroundColor: "#ff2a2a", color: "#fff" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onHardDelete(meme.id);
-            }}
+            title="Permanently Delete (Hard Delete)"
+            onClick={() => onHardDelete(meme.id)}
           >
             <span className="material-symbols-outlined">delete_forever</span>
             Hard Del
@@ -161,11 +180,43 @@ export default function AdminApp() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
+  // Phase 5: View Modes, Contextual Inspector, and Server Pagination
+  const [viewMode, setViewMode] = useState<VaultViewMode>(() => {
+    try {
+      return (window.localStorage.getItem("mc_admin_vault_view_mode") as VaultViewMode) || "medium-grid";
+    } catch {
+      return "medium-grid";
+    }
+  });
+  const [inspectedMeme, setInspectedMeme] = useState<AdminMeme | null>(null);
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [totalFilteredCount, setTotalFilteredCount] = useState<number>(0);
+  const [serverTotalPages, setServerTotalPages] = useState<number>(1);
+  const [backendStats, setBackendStats] = useState<VaultStats | null>(null);
+
   // Filtering & Pagination
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState(searchTerm);
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "draft" | "archived" | "excluded" | "nsfw">("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setCurrentPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  const handleViewModeChange = (mode: VaultViewMode) => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem("mc_admin_vault_view_mode", mode);
+    } catch {
+      // Ignore
+    }
+  };
 
   // Clear selections when filter changes
   useEffect(() => {
@@ -180,6 +231,9 @@ export default function AdminApp() {
   }, []);
 
   const stats = useMemo(() => {
+    if (backendStats && backendMode) {
+      return backendStats;
+    }
     let active = 0;
     let drafts = 0;
     let uncurated = 0;
@@ -189,14 +243,15 @@ export default function AdminApp() {
       if ((m as any).is_nsfw) nsfw++;
       if (m.status === "active") active++;
       else if (m.status === "draft") drafts++;
-      else if (m.curation_status === "excluded") excluded++;
+      else if (m.curation_status === "excluded" || (m as any).final_status === "excluded") excluded++;
       else uncurated++; // status === "archived" and not excluded
     }
     return { active, drafts, archived: uncurated, excluded, nsfw, total: collection.length };
-  }, [collection]);
+  }, [collection, backendStats, backendMode]);
 
   // Filtered and paginated list for instantaneous UI responsiveness
   const filteredCollection = useMemo(() => {
+    if (backendMode) return collection;
     const term = searchTerm.toLowerCase().trim();
     return collection.filter((meme) => {
       if (statusFilter === "active" && meme.status !== "active") return false;
@@ -213,9 +268,11 @@ export default function AdminApp() {
         (meme.tags && meme.tags.some((t) => t.toLowerCase().includes(term)))
       );
     });
-  }, [collection, searchTerm, statusFilter]);
+  }, [collection, searchTerm, statusFilter, backendMode]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredCollection.length / PAGE_SIZE));
+  const totalPages = backendMode
+    ? Math.max(1, serverTotalPages)
+    : Math.max(1, Math.ceil(filteredCollection.length / pageSize));
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -224,9 +281,12 @@ export default function AdminApp() {
   }, [totalPages, currentPage]);
 
   const paginatedMemes = useMemo(() => {
-    const start = (currentPage - 1) * PAGE_SIZE;
-    return filteredCollection.slice(start, start + PAGE_SIZE);
-  }, [filteredCollection, currentPage]);
+    if (backendMode) {
+      return collection;
+    }
+    const start = (currentPage - 1) * pageSize;
+    return filteredCollection.slice(start, start + pageSize);
+  }, [backendMode, collection, filteredCollection, currentPage, pageSize]);
 
   const updateCollection = (nextCollection: AdminMeme[], message: string) => {
     setCollection(nextCollection);
@@ -307,7 +367,7 @@ export default function AdminApp() {
     setNotice("Admin token saved for this browser session.");
   };
 
-  const loadBackend = async () => {
+  const loadBackend = useCallback(async (targetPage = currentPage, targetPerPage = pageSize) => {
     if (!adminToken.trim()) {
       setNotice("Enter your admin API token before loading the backend.");
       return;
@@ -317,57 +377,57 @@ export default function AdminApp() {
     setSyncActionName("Connecting backend...");
     try {
       window.sessionStorage.setItem(ADMIN_TOKEN_KEY, adminToken);
-      const response = await fetch("/api/admin/memes", {
-        headers: {
-          Authorization: `Bearer ${adminToken}`,
-          "X-Admin-Token": adminToken
-        },
-        cache: "no-store"
-      });
-      
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.error || `Request failed with ${response.status}`);
-      }
 
-      setCollection((payload.memes || []).map(normalizeAdminMeme));
-      setBackendConfig(payload.config || {});
+      const statusParam = (statusFilter === "all" || statusFilter === "excluded" || statusFilter === "nsfw") ? undefined : statusFilter;
+      const curationParam = statusFilter === "excluded" ? "excluded" : undefined;
+      const nsfwParam = statusFilter === "nsfw" ? "nsfw" : undefined;
+
+      const data = await fetchVaultMemes(adminToken, {
+        page: targetPage,
+        per_page: targetPerPage,
+        q: debouncedSearch.trim() || undefined,
+        status: statusParam,
+        curation_status: curationParam,
+        nsfw: nsfwParam,
+        stats: true
+      });
+
       setBackendMode(true);
-      
-      const activeCount = (payload.memes || []).filter((m: any) => m.status === "active").length;
+      setCollection(data.memes.map(normalizeAdminMeme));
+      setTotalFilteredCount(data.pagination.total_count);
+      setServerTotalPages(data.pagination.total_pages);
+      if (data.stats) {
+        setBackendStats(data.stats);
+      }
+      setBackendConfig(data.config || {});
+
+      const activeCount = data.stats?.active ?? data.memes.filter((m: any) => m.status === "active").length;
       setBackendActiveCount(activeCount);
-      
-      setNotice(`Backend connected. ${payload.memes?.length || 0} production memes loaded.`);
+
+      setNotice(`Backend connected. ${data.memes.length} memes loaded (Total matching: ${data.pagination.total_count}).`);
     } catch (error) {
+      setBackendMode(false);
       setNotice(error instanceof Error ? error.message : "Unable to load backend collection.");
     } finally {
       setIsSyncing(false);
       setSyncActionName("");
     }
-  };
+  }, [adminToken, currentPage, pageSize, statusFilter, debouncedSearch]);
 
   const handleAutoRefresh = useCallback(async () => {
     if (!adminToken.trim()) return;
     try {
-      const response = await fetch("/api/admin/memes", {
-        headers: {
-          Authorization: `Bearer ${adminToken}`,
-          "X-Admin-Token": adminToken
-        },
-        cache: "no-store"
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (response.ok && payload.memes) {
-        setCollection((payload.memes || []).map(normalizeAdminMeme));
-        setBackendConfig(payload.config || {});
-        setBackendMode(true);
-        const activeCount = (payload.memes || []).filter((m: any) => m.status === "active").length;
-        setBackendActiveCount(activeCount);
-      }
+      await loadBackend(currentPage, pageSize);
     } catch {
       // Silent error on background auto-refresh
     }
-  }, [adminToken]);
+  }, [adminToken, loadBackend, currentPage, pageSize]);
+
+  useEffect(() => {
+    if (backendMode && adminToken.trim()) {
+      loadBackend(currentPage, pageSize);
+    }
+  }, [currentPage, pageSize, statusFilter, debouncedSearch]);
 
   // Intercept Ctrl+R / Cmd+R to refresh admin data without browser page reload
   useEffect(() => {
@@ -446,7 +506,7 @@ export default function AdminApp() {
           ? collection.map((existing) => (existing.id === editingOriginalId ? savedMeme : existing))
           : [savedMeme, ...collection];
         setCollection(nextCollection);
-        
+
         const nextActiveCount = nextCollection.filter((m) => m.status === "active").length;
         setBackendActiveCount(nextActiveCount);
 
@@ -516,26 +576,34 @@ export default function AdminApp() {
 
   const hardDeleteMemes = useCallback(async (ids: string[]) => {
     if (!backendMode || !adminToken.trim() || ids.length === 0) return;
-    
-    if (!window.confirm(`Are you sure you want to permanently delete ${ids.length} meme(s)? This will remove them from D1 metadata and delete the files from R2 forever.`)) {
+
+    if (!window.confirm(`Are you absolutely sure you want to PERMANENTLY delete ${ids.length} meme(s) from D1 and R2? This action is irreversible.`)) {
       return;
     }
 
     setIsSyncing(true);
-    setSyncActionName(`Hard deleting ${ids.length} meme(s)...`);
+    setSyncActionName(`Hard-deleting ${ids.length} meme(s)...`);
     try {
-      const response = await hardDeleteBackendMemes(adminToken, ids);
-      const idsSet = new Set(ids);
-      setCollection((current) => current.filter((meme) => !idsSet.has(meme.id)));
-      setSelectedIds(new Set());
-      setNotice(`✅ ${response.message}`);
+      const res = await hardDeleteBackendMemes(adminToken, ids);
+      if (res.success) {
+        let msg = `Successfully permanently deleted ${res.deletedCount} meme(s).`;
+        if ((res as any).failedR2 && (res as any).failedR2.length > 0) {
+          msg += ` Warning: ${(res as any).failedR2.length} item(s) had R2 deletion issues.`;
+        }
+        setNotice(msg);
+        setSelectedIds(new Set());
+        setInspectedMeme(null);
+        await loadBackend(currentPage, pageSize);
+      } else {
+        setNotice("Hard delete returned unsuccessful response.");
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Backend hard delete failed.");
     } finally {
       setIsSyncing(false);
       setSyncActionName("");
     }
-  }, [backendMode, adminToken]);
+  }, [backendMode, adminToken, loadBackend, currentPage, pageSize]);
 
   const handleToggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -637,7 +705,7 @@ export default function AdminApp() {
             {isSyncing ? "SYNCING..." : "REFRESH (Ctrl+R)"}
           </button>
           <button
-            onClick={adminToken ? loadBackend : saveToken}
+            onClick={adminToken ? () => loadBackend() : saveToken}
             className="icon-btn brutalist-interactive"
             title="Sync / Load Backend"
             disabled={isSyncing}
@@ -853,9 +921,34 @@ export default function AdminApp() {
               {/* LEFT PANE - VAULT */}
               {activeTab === "vault" && <section className="left-pane">
                 <div className="pane-header" style={{ flexDirection: "column", gap: "12px", alignItems: "stretch" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <h3>Meme Vault ({filteredCollection.length})</h3>
-                    <div style={{ display: "flex", gap: "4px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <h3>Meme Vault ({backendMode ? totalFilteredCount : filteredCollection.length})</h3>
+                      {/* Five View Modes Selector */}
+                      <div className="view-mode-selector" title="Vault View Modes">
+                        {(
+                          [
+                            { id: "extra-large-grid", label: "XL Grid", icon: "photo_size_select_actual" },
+                            { id: "medium-grid", label: "Medium", icon: "grid_view" },
+                            { id: "compact-grid", label: "Compact", icon: "apps" },
+                            { id: "list", label: "List", icon: "view_list" },
+                            { id: "detailed-list", label: "Detailed", icon: "table_rows" }
+                          ] as const
+                        ).map((mode) => (
+                          <button
+                            key={mode.id}
+                            type="button"
+                            className={`view-mode-btn ${viewMode === mode.id ? "active" : ""}`}
+                            onClick={() => handleViewModeChange(mode.id)}
+                            title={`${mode.label} View Mode`}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "18px" }}>{mode.icon}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
                       {(["all", "active", "excluded", "archived", "draft", "nsfw"] as const).map((st) => (
                         <button
                           key={st}
@@ -881,17 +974,14 @@ export default function AdminApp() {
                     </div>
                   </div>
 
-                  {/* Search filter input */}
-                  <div style={{ display: "flex", gap: "8px" }}>
+                  {/* Search filter input & Per-Page Selector */}
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                     <div style={{ flex: 1, position: "relative" }}>
                       <input
                         type="text"
                         placeholder="Quick search by title, ID, tag, category..."
                         value={searchTerm}
-                        onChange={(e) => {
-                          setSearchTerm(e.target.value);
-                          setCurrentPage(1);
-                        }}
+                        onChange={(e) => setSearchTerm(e.target.value)}
                         className="brutalist-input"
                         style={{ width: "100%", padding: "8px 12px", boxSizing: "border-box" }}
                       />
@@ -902,7 +992,7 @@ export default function AdminApp() {
                         onClick={() => setSearchTerm("")}
                         className="brutalist-border-sm"
                         style={{
-                          padding: "0 12px",
+                          padding: "8px 12px",
                           background: "var(--surface-container-high)",
                           color: "var(--on-surface)",
                           cursor: "pointer"
@@ -911,11 +1001,25 @@ export default function AdminApp() {
                         Clear
                       </button>
                     )}
+                    <select
+                      className="brutalist-input"
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      style={{ padding: "8px 10px", fontWeight: 700, color: "var(--secondary)" }}
+                      title="Items per page"
+                    >
+                      <option value={25}>25 / page</option>
+                      <option value={50}>50 / page</option>
+                      <option value={100}>100 / page</option>
+                    </select>
                   </div>
                 </div>
 
-                {/* Bulk Actions */}
-                {(statusFilter === "archived" || statusFilter === "excluded") && (
+                {/* Bulk Actions Header */}
+                {(statusFilter === "archived" || statusFilter === "excluded" || selectedIds.size > 0) && (
                   <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "16px", padding: "12px", background: "var(--surface-container)", border: "2px solid black" }}>
                     <button
                       type="button"
@@ -942,10 +1046,10 @@ export default function AdminApp() {
                   </div>
                 )}
 
-                {/* Paginated Collection List */}
-                <div className="collection-list custom-scrollbar">
-                  {filteredCollection.length === 0 ? (
-                    <div style={{ color: "var(--outline-variant)", padding: "24px", textAlign: "center" }}>
+                {/* Paginated Collection List with Active View Mode */}
+                <div className={`collection-list vault-view-${viewMode} custom-scrollbar`}>
+                  {paginatedMemes.length === 0 ? (
+                    <div style={{ color: "var(--outline-variant)", padding: "24px", textAlign: "center", gridColumn: "1 / -1" }}>
                       {searchTerm ? "No memes match your search query." : "No admin memes in this view."}
                     </div>
                   ) : (
@@ -954,16 +1058,160 @@ export default function AdminApp() {
                         key={meme.id}
                         meme={meme}
                         backendMode={backendMode}
+                        viewMode={viewMode}
                         onEdit={editMeme}
                         onDelete={deleteMeme}
-                        isSelected={selectedIds.has(meme.id)}
+                        onInspect={setInspectedMeme}
+                        isSelected={selectedIds.has(meme.id) || (inspectedMeme?.id === meme.id)}
                         onToggleSelect={handleToggleSelect}
-                        isArchivedView={statusFilter === "archived" || statusFilter === "excluded"}
+                        isArchivedView={statusFilter === "archived" || statusFilter === "excluded" || selectedIds.size > 0}
                         onHardDelete={(id) => hardDeleteMemes([id])}
                       />
                     ))
                   )}
                 </div>
+
+                {/* Contextual Details Panel (Inspector) */}
+                {(inspectedMeme || selectedIds.size > 1) && (
+                  <aside className="vault-inspector brutalist-border brutalist-shadow-black">
+                    <div className="vault-inspector-header">
+                      <h4>{selectedIds.size > 1 ? `BULK ACTIONS (${selectedIds.size} SELECTED)` : "MEME INSPECTOR"}</h4>
+                      <button
+                        type="button"
+                        className="brutalist-border-sm"
+                        style={{ padding: "2px 8px", cursor: "pointer", background: "var(--surface)", color: "var(--on-surface)", fontWeight: 700 }}
+                        onClick={() => {
+                          setInspectedMeme(null);
+                          setSelectedIds(new Set());
+                        }}
+                      >
+                        ✕ CLOSE
+                      </button>
+                    </div>
+
+                    {selectedIds.size > 1 ? (
+                      <div>
+                        <p style={{ margin: "4px 0 12px 0", fontSize: "12px", color: "var(--on-surface-variant)" }}>
+                          You have selected <strong>{selectedIds.size}</strong> memes across the vault.
+                        </p>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                          <button
+                            type="button"
+                            className="brutalist-border-sm"
+                            style={{ padding: "6px 12px", background: "var(--surface-container-high)", color: "var(--on-surface)", fontWeight: 700 }}
+                            onClick={async () => {
+                              for (const id of Array.from(selectedIds)) {
+                                await deleteMeme(id);
+                              }
+                              setSelectedIds(new Set());
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>archive</span> Bulk Archive
+                          </button>
+                          <button
+                            type="button"
+                            className="brutalist-border-sm"
+                            style={{ padding: "6px 12px", background: "#ff2a2a", color: "#fff", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}
+                            onClick={() => hardDeleteMemes(Array.from(selectedIds))}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>delete_forever</span> Permanently Delete
+                          </button>
+                          <button
+                            type="button"
+                            className="brutalist-border-sm"
+                            style={{ padding: "6px 12px", background: "transparent", color: "var(--outline)", fontWeight: 700 }}
+                            onClick={() => setSelectedIds(new Set())}
+                          >
+                            Deselect All
+                          </button>
+                        </div>
+                      </div>
+                    ) : inspectedMeme ? (
+                      <>
+                        <div className="vault-inspector-media">
+                          {inspectedMeme.media_type === "video" ? (
+                            <video controls src={inspectedMeme.url} style={{ maxHeight: "200px" }} />
+                          ) : (
+                            <img src={inspectedMeme.url} alt={inspectedMeme.title || inspectedMeme.id} />
+                          )}
+                        </div>
+
+                        <div className="vault-inspector-fields">
+                          <div className="vault-inspector-field">
+                            <label>Meme ID (Immutable)</label>
+                            <span>{inspectedMeme.id}</span>
+                          </div>
+                          <div className="vault-inspector-field">
+                            <label>Title</label>
+                            <span>{inspectedMeme.title || "Untitled"}</span>
+                          </div>
+                          <div className="vault-inspector-field">
+                            <label>Lifecycle Status</label>
+                            <span className={`badge ${inspectedMeme.status}`}>{inspectedMeme.status}</span>
+                          </div>
+                          <div className="vault-inspector-field">
+                            <label>Curation Status</label>
+                            <span>{(inspectedMeme as any).final_status || (inspectedMeme as any).curation_status || "Unreviewed"}</span>
+                          </div>
+                          <div className="vault-inspector-field">
+                            <label>Category</label>
+                            <span>{inspectedMeme.category || "Unsorted"}</span>
+                          </div>
+                          <div className="vault-inspector-field">
+                            <label>Rarity</label>
+                            <span>{inspectedMeme.rarity || "Common"}</span>
+                          </div>
+                          <div className="vault-inspector-field">
+                            <label>Likes Count</label>
+                            <span>{inspectedMeme.likes_count ?? 0}</span>
+                          </div>
+                          <div className="vault-inspector-field">
+                            <label>NSFW Flag</label>
+                            <span>{Boolean((inspectedMeme as any).is_nsfw) ? "🔞 NSFW" : "SAFE"}</span>
+                          </div>
+                        </div>
+
+                        <div className="vault-inspector-actions">
+                          <button
+                            type="button"
+                            className="brutalist-border-sm"
+                            onClick={() => editMeme(inspectedMeme)}
+                            style={{ background: "var(--primary)", color: "var(--on-primary)" }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>edit</span> Edit
+                          </button>
+                          <a
+                            href={`/curate#id=${encodeURIComponent(inspectedMeme.id)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="brutalist-border-sm"
+                            style={{ background: "var(--secondary)", color: "#000" }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>rate_review</span> Re-Curate
+                          </a>
+                          <button
+                            type="button"
+                            className="brutalist-border-sm"
+                            onClick={() => deleteMeme(inspectedMeme.id)}
+                            style={{ background: "var(--surface)", color: "var(--on-surface)" }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>archive</span> {inspectedMeme.status === "archived" ? "Restore" : "Archive"}
+                          </button>
+                          {backendMode && (
+                            <button
+                              type="button"
+                              className="brutalist-border-sm"
+                              style={{ background: "#ff2a2a", color: "#fff" }}
+                              onClick={() => hardDeleteMemes([inspectedMeme.id])}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>delete_forever</span> Hard Delete
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    ) : null}
+                  </aside>
+                )}
 
                 {/* Pagination Controls */}
                 {totalPages > 1 && (
@@ -994,7 +1242,7 @@ export default function AdminApp() {
                       ◀ Prev
                     </button>
                     <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--secondary)" }}>
-                      Page {currentPage} of {totalPages}
+                      Page {currentPage} of {totalPages} ({backendMode ? totalFilteredCount : filteredCollection.length} total)
                     </span>
                     <button
                       type="button"
@@ -1020,7 +1268,7 @@ export default function AdminApp() {
               <section className="right-pane brutalist-border brutalist-shadow-black-lg">
                 {editingOriginalId && <div className="edit-mode-tag brutalist-border-sm">EDIT MODE</div>}
                 <h3>{editingOriginalId ? "Edit Meme" : "Add Meme"}</h3>
-                
+
                 <form onSubmit={handleSubmit}>
                   <div className="form-group">
                     <label>Media Asset</label>
@@ -1033,12 +1281,12 @@ export default function AdminApp() {
                       <div className="url-zone">
                         <div className="form-group" style={{ marginBottom: 0 }}>
                           <label style={{ color: "var(--outline)", fontSize: "10px" }}>Media URL</label>
-                          <input 
-                            className="brutalist-input" 
-                            style={{ fontFamily: "monospace" }} 
-                            value={form.url} 
-                            onChange={(e) => handleUrlInput(e.target.value.includes("drive.google") ? "google-drive" : "url", e.target.value)} 
-                            placeholder="https://..." 
+                          <input
+                            className="brutalist-input"
+                            style={{ fontFamily: "monospace" }}
+                            value={form.url}
+                            onChange={(e) => handleUrlInput(e.target.value.includes("drive.google") ? "google-drive" : "url", e.target.value)}
+                            placeholder="https://..."
                           />
                         </div>
                         {form.url && (
@@ -1057,32 +1305,32 @@ export default function AdminApp() {
                   <div className="metadata-grid">
                     <div className="form-group col-span-2">
                       <label>Title</label>
-                      <input 
-                        className="brutalist-input" 
-                        style={{ fontFamily: "var(--font-display)", fontSize: "20px", textTransform: "uppercase" }} 
-                        value={form.title} 
-                        onChange={(e) => updateForm("title", e.target.value)} 
+                      <input
+                        className="brutalist-input"
+                        style={{ fontFamily: "var(--font-display)", fontSize: "20px", textTransform: "uppercase" }}
+                        value={form.title}
+                        onChange={(e) => updateForm("title", e.target.value)}
                         placeholder="Exam week survival"
                       />
                     </div>
                     <div className="form-group">
                       <label>Category</label>
-                      <input 
-                        className="brutalist-input" 
+                      <input
+                        className="brutalist-input"
                         style={{ textTransform: "uppercase", fontWeight: 700 }}
-                        value={form.category} 
-                        onChange={(e) => updateForm("category", e.target.value)} 
+                        value={form.category}
+                        onChange={(e) => updateForm("category", e.target.value)}
                       />
                     </div>
                     <div className="form-group">
                       <label>Status</label>
-                      <select 
-                        className="brutalist-input" 
+                      <select
+                        className="brutalist-input"
                         style={{ textTransform: "uppercase", fontWeight: 700, color: "var(--secondary)" }}
-                        value={form.status} 
+                        value={form.status}
                         onChange={(e) => updateForm("status", e.target.value as MemeStatus)}
                       >
-                        <option 
+                        <option
                           value="active"
                           disabled={backendMode && Boolean(editingOriginalId) && !(collection.find((m) => m.id === editingOriginalId) as unknown as { is_finalized_keep?: boolean })?.is_finalized_keep}
                         >
@@ -1094,10 +1342,10 @@ export default function AdminApp() {
                     </div>
                     <div className="form-group">
                       <label>Rarity</label>
-                      <select 
-                        className="brutalist-input" 
+                      <select
+                        className="brutalist-input"
                         style={{ textTransform: "uppercase", fontWeight: 700, color: "var(--tertiary-container)" }}
-                        value={form.rarity} 
+                        value={form.rarity}
                         onChange={(e) => updateForm("rarity", e.target.value as Rarity)}
                       >
                         <option value="Common">Common</option>
@@ -1108,12 +1356,12 @@ export default function AdminApp() {
                     </div>
                     <div className="form-group">
                       <label>Likes Count</label>
-                      <input 
+                      <input
                         type="number"
-                        className="brutalist-input" 
+                        className="brutalist-input"
                         style={{ fontFamily: "monospace" }}
-                        value={form.likes_count ?? 0} 
-                        onChange={(e) => updateForm("likes_count", Number(e.target.value))} 
+                        value={form.likes_count ?? 0}
+                        onChange={(e) => updateForm("likes_count", Number(e.target.value))}
                       />
                     </div>
                   </div>
@@ -1130,8 +1378,20 @@ export default function AdminApp() {
                       {showAdvanced && (
                         <div className="advanced-content brutalist-border-sm">
                           <div className="form-group">
-                            <label style={{ color: "var(--outline)", fontSize: "10px" }}>Meme ID</label>
-                            <input className="brutalist-input" value={form.id} onChange={(e) => updateForm("id", e.target.value)} />
+                            <label style={{ color: "var(--outline)", fontSize: "10px" }}>Meme ID {editingOriginalId ? "(Immutable)" : ""}</label>
+                            <input
+                              className="brutalist-input"
+                              value={form.id}
+                              readOnly={Boolean(editingOriginalId)}
+                              disabled={Boolean(editingOriginalId)}
+                              style={{ opacity: editingOriginalId ? 0.7 : 1, cursor: editingOriginalId ? "not-allowed" : "text" }}
+                              onChange={(e) => updateForm("id", e.target.value)}
+                            />
+                            {editingOriginalId && (
+                              <span style={{ fontSize: "10px", color: "var(--outline)", display: "block", marginTop: "4px" }}>
+                                🔒 Meme ID is immutable and cannot be changed through ordinary editing.
+                              </span>
+                            )}
                           </div>
                           <div className="form-group">
                             <label style={{ color: "var(--outline)", fontSize: "10px" }}>Tags (Comma separated)</label>

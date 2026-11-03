@@ -243,3 +243,32 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
 - Local migration execution, schema PRAGMA checks, frontend build, ingestion
   tests, analytics tests, and consensus tests passed. Remote PRAGMA verification
   and production migration remain blocked by missing Cloudflare credentials.
+
+
+---
+
+## 10. Admin Overhaul Phase 5 — Meme Vault, Details Panel & Data Access (November 3, 2026)
+
+- **Server-Side Data Access & Bounded Query Contracts**:
+  - `GET /api/admin/memes` enhanced with parameterized SQL query parsing supporting `page`, `per_page` (clamped 1–100), `q` (searching across title, ID, category, and tags), `status` (`all`, `active`, `draft`, `archived`), `curation_status` (`all`, `keep`, `excluded`, `review_later`, `unreviewed`), `nsfw` (`all`, `safe`, `nsfw`), and whitelisted sorting (`uploaded_at`, `title`, `id`, `likes_count`).
+  - Single-scan corpus statistics aggregation in D1 calculates global counts for `total`, `active`, `drafts`, `archived`, `excluded`, and `nsfw` without requiring the client to load or scan the entire corpus in memory.
+  - Backward compatibility preserved: unbounded legacy requests without pagination parameters continue to return the full array as expected.
+- **Five Approved Vault View Modes**:
+  - Implemented the 5 view modes specified in the Master Implementation Plan:
+    1. **Extra-Large Grid (`extra-large-grid`)**: Prominent 240px card previews with media focus and quick action bar.
+    2. **Medium Grid (`medium-grid`)**: Balanced card grid (160px thumbs) with status badges and quick actions.
+    3. **Compact Grid (`compact-grid`)**: High-density 110px square grid with badge overlays.
+    4. **List (`list`)**: Single-line compact tabular rows with inline thumbnail, ID, title, and actions.
+    5. **Detailed List (`detailed-list`)**: Expanded row cards featuring full metadata, tags, rarity, and action buttons.
+  - View mode state persisted in `localStorage` under `mc_admin_vault_view_mode`.
+- **Contextual Details Panel (Inspector)**:
+  - Slide-out / docked inspector panel accessible on click of any meme in the vault.
+  - Displays high-resolution preview, immutable Meme ID with one-click copy, lifecycle status, curation status, NSFW flag, category, rarity, likes, media type, and storage path.
+  - Integrated quick actions: Edit Metadata, deep-link Re-Curate (`/curate#id=...`), Archive / Restore toggle, and permanent Hard Delete with confirmation dialog.
+  - Multi-select mode displays a Bulk Actions summary showing count of selected items, bulk archive, and bulk hard delete.
+- **Immutable Meme ID Enforcement**:
+  - Server-side validation in `PATCH /api/admin/memes` rejects any modification where `meme.id !== originalId` with HTTP 400.
+  - Admin edit form locks the Meme ID field (`readOnly` / `disabled`) when editing existing memes, preventing accidental ID tampering.
+- **Transparent Hard Delete Reporting**:
+  - `functions/api/admin/memes/hard-delete.ts` checks both `env.MEMES_BUCKET` and `env.R2_BUCKET` bindings and returns structured results reporting deleted count, affected IDs, and any per-item R2 deletion errors.
+- **Verification**: `npm run test:vault` (5/5 tests passing), `npm run test:ingestion` (4/4 tests passing), `npm run test:analytics` (5/5 tests passing), `node --test tests/curationConsensus.test.mjs` (9/9 tests passing), and `npm run build` pass with 0 errors.
