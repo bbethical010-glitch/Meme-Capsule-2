@@ -1,0 +1,146 @@
+.landing-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+  padding: 32px 18px;
+  background: #f4c300;
+  color: #121212;
+  font-family: "Chivo", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.landing-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.18;
+  background-image:
+    linear-gradient(#121212 1px, transparent 1px),
+    linear-gradient(90deg, #121212 1px, transparent 1px);
+  background-size: 34px 34px;
+  transform: rotate(-8deg) scale(1.2);
+}
+
+.landing-card {
+  width: min(100%, 680px);
+  position: relative;
+  z-index: 1;
+  padding: clamp(24px, 5vw, 52px);
+  background: #f5f5f7;
+  border: 3px solid #121212;
+  box-shadow: 10px 10px 0 #121212;
+}
+
+.landing-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: "Anton", Impact, sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+}
+
+.landing-brand-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  background: #9b30ff;
+  border: 2px solid #121212;
+  color: #fff;
+  font-size: 0.85rem;
+  letter-spacing: 0;
+}
+
+.landing-kicker {
+  margin: 42px 0 10px;
+  color: #9b30ff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.landing-card h1 {
+  margin: 0;
+  font-family: "Anton", Impact, sans-serif;
+  font-size: clamp(3.6rem, 11vw, 7rem);
+  line-height: 0.88;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+
+.landing-card h1 span {
+  color: #9b30ff;
+}
+
+.landing-intro {
+  max-width: 430px;
+  margin: 24px 0 30px;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.landing-options {
+  display: grid;
+  gap: 14px;
+}
+
+.landing-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 76px;
+  padding: 15px 18px;
+  border: 3px solid #121212;
+  box-shadow: 5px 5px 0 #121212;
+  color: #121212;
+  text-decoration: none;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.landing-option:hover,
+.landing-option:focus-visible {
+  transform: translate(3px, 3px);
+  box-shadow: 2px 2px 0 #121212;
+  outline: none;
+}
+
+.landing-option-superadmin { background: #9b30ff; color: #fff; }
+.landing-option-admin { background: #34c759; }
+.landing-option-reports { background: #ff453a; color: #fff; }
+
+.landing-option-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.landing-option strong {
+  font-family: "Anton", Impact, sans-serif;
+  font-size: 1.45rem;
+  letter-spacing: 0.04em;
+}
+
+.landing-option small {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.landing-option-arrow {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.landing-footer {
+  margin: 32px 0 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+@media (max-width: 480px) {
+  .landing-page { padding: 18px 12px; }
+  .landing-card { box-shadow: 6px 6px 0 #121212; }
+  .landing-option { min-height: 70px; padding: 12px 14px; }
+  .landing-option small { font-size: 0.72rem; }
+}
