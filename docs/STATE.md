@@ -317,6 +317,9 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
     - If atomic update changes 0 rows, rolls back the uploaded R2 object and returns 409.
     - Audit logging: Logs edit history into `media_operations` (`id`, `meme_id`, `actor_id`, `actor_name`, `old_storage_path`, `new_storage_path`, `operation_type`, `created_at`).
     - Recovers old storage objects safely without breaking active sessions.
+  - **Same-Origin Media Proxy (`functions/api/curate/media/proxy.ts`)**:
+    - Resolves browser CORS restrictions when fetching remote R2 / custom-domain media for canvas pixel manipulation (`getImageData`, `toBlob`).
+    - Multi-tier loader in `ImageEditorModal.tsx` fetches through the same-origin proxy (reading directly from `env.MEMES_BUCKET` or edge upstream fetch), converts to local `Blob` / `objectURL`, and draws to canvas without canvas tainting.
 - **Phase 7: End-to-End Verification & Rollout**:
   - Full automated test suite passing (27/27 tests across 5 test suites):
     - `npm run test:editor` (4/4 tests): tests mosaic pixelation, box blur convolution, source rotation/crop coordinate transforms, and out-of-bounds safety.

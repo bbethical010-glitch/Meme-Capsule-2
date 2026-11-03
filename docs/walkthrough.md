@@ -551,7 +551,12 @@ For non-meme uploads (e.g., random photos, corrupt images, spam):
 - **Audit History**:
   - Records every modification in `media_operations` (`meme_id`, `actor_id`, `actor_name`, `old_storage_path`, `new_storage_path`, `operation_type`, `created_at`).
 
-### 8.3 Verification & Automated Test Suites
+### 8.3 Same-Origin Media Proxy (`/api/curate/media/proxy`)
+- Eliminates browser CORS failures when fetching canonical images for HTML5 canvas editing.
+- Edge proxy checks the `memes` table in D1, reads the object directly from `env.MEMES_BUCKET` (or proxies via edge fetch), and streams the media with `Access-Control-Allow-Origin: *`.
+- Client receives a local `Blob` and renders via `URL.createObjectURL(blob)`, completely preventing canvas tainting and security errors.
+
+### 8.4 Verification & Automated Test Suites
 - **Full Test Suite Results (27/27 Passed)**:
   - `npm run test:editor`: 4 passed (mosaic pixel downsampling, box blur convolution, source crop/rotation coordinate transforms, out-of-bounds safety).
   - `npm run test:vault`: 5 passed (server-side pagination, view modes, search predicates).

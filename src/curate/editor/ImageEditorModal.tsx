@@ -60,22 +60,104 @@ export default function ImageEditorModal({
     return () => window.removeEventListener("resize", updateSize);
   }, []);
 
-  // Load image with CORS
+  // Load image with CORS resilience and same-origin proxy fallback
   useEffect(() => {
-    setImageLoading(true);
-    setLoadError(null);
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      setImageObj(img);
-      setImageLoading(false);
+    let cancelled = false;
+    let objectUrlToRevoke: string | null = null;
+
+    const sessionToken =
+      token ||
+      sessionStorage.getItem("curator_token") ||
+      localStorage.getItem("mc_curator_token") ||
+      localStorage.getItem("curator_token") ||
+      "";
+
+    const loadImage = async () => {
+      setImageLoading(true);
+      setLoadError(null);
+
+      try {
+        let blob: Blob | null = null;
+
+        // Attempt 1: Fetch via same-origin media proxy (bypasses browser CORS restrictions)
+        try {
+          const proxyUrl = `/api/curate/media/proxy?id=${encodeURIComponent(meme.id)}&url=${encodeURIComponent(meme.image_url)}`;
+          const proxyRes = await fetch(proxyUrl, {
+            headers: sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}
+          });
+          if (proxyRes.ok) {
+            blob = await proxyRes.blob();
+          }
+        } catch (e) {
+          console.warn("Media proxy fetch failed, attempting direct fetch:", e);
+        }
+
+        // Attempt 2: If proxy returned error, attempt direct CORS fetch
+        if (!blob) {
+          try {
+            const directRes = await fetch(meme.image_url, { mode: "cors" });
+            if (directRes.ok) {
+              blob = await directRes.blob();
+            }
+          } catch {
+            // Direct CORS fetch failed
+          }
+        }
+
+        if (cancelled) return;
+
+        if (blob) {
+          const objectUrl = URL.createObjectURL(blob);
+          objectUrlToRevoke = objectUrl;
+
+          const img = new Image();
+          img.onload = () => {
+            if (cancelled) return;
+            setImageObj(img);
+            setImageLoading(false);
+          };
+          img.onerror = () => {
+            if (cancelled) return;
+            setLoadError("Failed to decode image data.");
+            setImageLoading(false);
+          };
+          img.src = objectUrl;
+        } else {
+          // Attempt 3: Direct Image tag with crossOrigin
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            if (cancelled) return;
+            setImageObj(img);
+            setImageLoading(false);
+          };
+          img.onerror = () => {
+            if (cancelled) return;
+            setLoadError("Failed to load meme image for editing (CORS or network error).");
+            setImageLoading(false);
+          };
+          img.src = meme.image_url;
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Image loader error:", err);
+        setLoadError(
+          "Failed to load meme image for editing: " +
+            (err instanceof Error ? err.message : "Network error")
+        );
+        setImageLoading(false);
+      }
     };
-    img.onerror = () => {
-      setLoadError("Failed to load meme image for editing (CORS or network error).");
-      setImageLoading(false);
+
+    loadImage();
+
+    return () => {
+      cancelled = true;
+      if (objectUrlToRevoke) {
+        URL.revokeObjectURL(objectUrlToRevoke);
+      }
     };
-    img.src = meme.image_url;
-  }, [meme.image_url]);
+  }, [meme.id, meme.image_url, token]);
 
   // Push state to history stack
   const updateState = useCallback(
