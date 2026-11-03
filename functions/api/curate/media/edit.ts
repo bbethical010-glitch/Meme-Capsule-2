@@ -102,16 +102,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       updateRes = await env.DB.prepare(`
         UPDATE memes
         SET storage_path = ?,
-            image_url = ?,
-            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            image_url = ?
         WHERE id = ? AND storage_path = ?
       `).bind(newStorageKey, newImageUrl, memeId, expectedStoragePath).run();
     } else {
       updateRes = await env.DB.prepare(`
         UPDATE memes
         SET storage_path = ?,
-            image_url = ?,
-            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            image_url = ?
         WHERE id = ? AND (storage_path IS NULL OR storage_path = '')
       `).bind(newStorageKey, newImageUrl, memeId).run();
     }
