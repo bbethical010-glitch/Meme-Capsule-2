@@ -6,6 +6,7 @@ import CatApp from "./categorise/CatApp";
 import CurateApp from "./curate/CurateApp";
 import AnalyticsPreviewPage from "./curate/analytics-preview/AnalyticsPreviewPage";
 import AiJudgeApp from "./ai-judge/AiJudgeApp";
+import LandingPage from "./LandingPage";
 import "./base.css";
 
 function RootRouter() {
@@ -56,8 +57,7 @@ function RootRouter() {
     return <CatApp />;
   }
 
-  // Default entry route for internal tool workbench
-  return <CurateApp />;
+  return <LandingPage />;
 }
 
 createRoot(document.getElementById("root")!).render(

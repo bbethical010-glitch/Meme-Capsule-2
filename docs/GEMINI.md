@@ -7,7 +7,7 @@
 
 The public end-user mobile experience (Android APK `com.meme.capsule` and promotional web landing `https://memecapsule.wtf/`) is maintained in a companion mobile repository.
 
-**This repository** serves as the **Serverless Edge Backend, Curation Engine, Moderation Hub, and Administration Portal** deployed on Cloudflare Pages (`https://meme-capsule-eww.pages.dev`). The discontinued legacy root landing UI (`App.tsx`, `styles.css`) has been removed; the default root `/` and hash routes serve the internal Neo-Brutalist tool suites.
+**This repository** serves as the **Serverless Edge Backend, Curation Engine, Moderation Hub, and Administration Portal** deployed on Cloudflare Pages (`https://meme-capsule-eww.pages.dev`). The root `/` presents an internal portal selector linking to the separately authenticated `/curate`, `/admin`, and `/reports` workbenches.
 
 **Tech Stack:**
 - **Frontend / Internal Workbenches:** React 19, TypeScript, Vite (`/curate`, `/admin`, `/reports`, `/ai-judge`, `/categorise`)

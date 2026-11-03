@@ -87,6 +87,11 @@ Meme Capsule operates across three decoupled codebases:
 
 ## Admin Dashboard
 
+The root URL presents an internal portal landing page with links to the
+`SUPERADMIN` curation workbench (`/curate`), the `ADMIN` operations console
+(`/admin`), and the red `REPORTS` moderation desk (`/reports`). The individual
+workbench routes retain their existing authentication and behavior.
+
 Open:
 
 ```text
