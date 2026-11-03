@@ -253,46 +253,12 @@ modes, contextual details panel, immutable normal IDs, explicit lifecycle/curati
 semantics, and visible partial bulk-action results without weakening the public
 final-`keep` gate.
 
-### Implementation record
+### Verified history and status
 
-- Updated `functions/api/admin/memes.ts` with server-side query parameter handling
-  (`page`, `per_page` clamped 1-100, `q`/`search`, `status`, `sort_by`, `sort_dir`, and `all`).
-- Single high-performance D1 aggregation query calculates top-level stats (`total`, `active`,
-  `drafts`, `excluded`, `archived`, `nsfw`) across the entire corpus.
-- Dynamic parameterized SQL filtering with safe column whitelist protects against SQL injection
-  and ensures stable pagination (`LIMIT ? OFFSET ?`).
-- Enforced immutable normal IDs in `onRequestPatch`: updates attempting to alter `row.id` are
-  strictly rejected with HTTP 400 error, protecting foreign key constraints across curation,
-  final consensus, and audit tables.
-- Updated `src/lib/adminApi.ts` with typed interfaces (`VaultViewMode`, `VaultQueryParams`,
-  `VaultStats`, `VaultPagination`, `VaultListResponse`) and exported `fetchVaultMemes`.
-- Implemented **Five Vault View Modes** with persistent `localStorage` preference in `src/admin/AdminApp.tsx`
-  and `src/admin/admin.css`:
-  1. `rows`: Detailed list rows with thumbnail, metadata badges, and actions.
-  2. `compact`: Dense 38px single-line scanner for rapid inspection of dozens of memes.
-  3. `grid`: Card gallery with 150px previews, hover zoom, and quick action bar.
-  4. `table`: Tabular data sheet with sticky headers and column-based comparisons.
-  5. `split`: Split inspector mode with main list on the left and sticky details on the right.
-- Implemented **Contextual Details Panel (Inspector)** displaying:
-  - High-res media preview with direct R2 link.
-  - Immutable ID with one-click clipboard copy (`📋 COPY ID`).
-  - 2-tier lifecycle matrix (Pipeline State: `ACTIVE`/`DRAFT`/`ARCHIVED`; Curation Status: `KEEP`/`EXCLUDED`/`UNRESOLVED`/`PENDING`).
-  - NSFW safety controls with instant toggle CTA.
-  - Complete metadata grid (Category, Tags chips, Media Type, Input Method, Rarity, Storage Path, Likes).
-  - Quick action buttons (Edit in Form, Open in /curate, Hard Delete).
-- Locked Meme ID input in the Edit form when editing existing memes (`disabled`, `readOnly`, with `IMMUTABLE` badge).
-- Added visible partial bulk-action reporting for permanent purges (`Processed X: Y succeeded, Z failed`).
-- Added comprehensive unit test suite in `tests/vault.test.ts` covering pagination math, search clamping,
-  sort sanitization, immutable ID protection, and bulk action reporting. Configured `npm run test:vault` in `package.json`.
-
-### Verification and status
-
-- `npm run test:vault`: passed 5/5.
-- `npm run test:ingestion`: passed 4/4.
-- `npm run test:analytics`: passed 5/5.
-- `node --test tests/curationConsensus.test.mjs`: passed 9/9.
-- `npm run build`: passed (0 errors, 1629 modules transformed).
-- **Status:** Completed locally.
+- The current Admin Vault still loads all returned rows and filters/slices them in
+  React; no Phase 5 server-side contract or five-mode Vault implementation is
+  present.
+- **Status:** Pending; not started.
 
 ## Admin Overhaul Phase 6 — Human-judge image editor
 

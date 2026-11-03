@@ -4,46 +4,15 @@ type AdminMemeResponse = {
   meme: AdminMeme;
 };
 
+type AdminMemesResponse = {
+  memes: AdminMeme[];
+};
+
 type AdminUploadResponse = {
   url: string;
   storage_path: string;
   source_link: string;
   media_type: AdminMeme["media_type"];
-};
-
-export type VaultViewMode = "rows" | "compact" | "grid" | "table" | "split";
-
-export type VaultQueryParams = {
-  page?: number;
-  per_page?: number;
-  q?: string;
-  status?: string;
-  sort_by?: string;
-  sort_dir?: "asc" | "desc";
-  all?: boolean;
-};
-
-export type VaultStats = {
-  total: number;
-  active: number;
-  drafts: number;
-  excluded: number;
-  archived: number;
-  nsfw: number;
-};
-
-export type VaultPagination = {
-  page: number;
-  per_page: number;
-  total: number;
-  total_pages: number;
-};
-
-export type VaultListResponse = {
-  memes: AdminMeme[];
-  pagination: VaultPagination;
-  stats: VaultStats;
-  config: Record<string, boolean>;
 };
 
 export type IngestionEvaluation = {
@@ -118,31 +87,13 @@ const parseJsonResponse = async <T>(response: Response): Promise<T> => {
   return payload as T;
 };
 
-export const fetchVaultMemes = async (
-  adminToken: string,
-  params: VaultQueryParams = {}
-): Promise<VaultListResponse> => {
-  const query = new URLSearchParams();
-  if (params.page) query.set("page", String(params.page));
-  if (params.per_page) query.set("per_page", String(params.per_page));
-  if (params.q) query.set("q", params.q);
-  if (params.status) query.set("status", params.status);
-  if (params.sort_by) query.set("sort_by", params.sort_by);
-  if (params.sort_dir) query.set("sort_dir", params.sort_dir);
-  if (params.all) query.set("all", "true");
-
-  const qs = query.toString();
-  const url = `/api/admin/memes${qs ? `?${qs}` : ""}`;
-  const response = await fetch(url, {
+export const listBackendMemes = async (adminToken: string) => {
+  const response = await fetch("/api/admin/memes", {
     headers: authHeaders(adminToken),
     cache: "no-store"
   });
-  return parseJsonResponse<VaultListResponse>(response);
-};
-
-export const listBackendMemes = async (adminToken: string) => {
-  const res = await fetchVaultMemes(adminToken, { all: true });
-  return res.memes;
+  const payload = await parseJsonResponse<AdminMemesResponse>(response);
+  return payload.memes;
 };
 
 export const saveBackendMeme = async (
