@@ -47,7 +47,6 @@ export type D1MemeRow = {
   share_count: number;
   likes_count: number;
   random_key: number;
-  is_nsfw?: number;
   nsfw_flagged_by?: string | null;
 };
 

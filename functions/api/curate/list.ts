@@ -6,6 +6,7 @@
 
 import type { PagesFunction } from "../../_shared/pages";
 import { json, type Env } from "../../_shared/d1r2";
+import { hasIngestionSchema } from "../../_shared/ingestion";
 
 interface MemeRow {
   id: string;
@@ -30,8 +31,13 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const filter = url.searchParams.get("filter") || "all";
     const offset = (page - 1) * perPage;
     const publicBase = (env.R2_PUBLIC_URL || "").replace(/\/+$/, "");
+    const ingestionReady = await hasIngestionSchema(env.DB);
+    const ingestionJoin = ingestionReady ? "LEFT JOIN ingestion_jobs ij ON m.id = ij.meme_id" : "";
 
     let whereClause = "WHERE m.id NOT IN (SELECT meme_id FROM meme_force_removals)";
+    if (ingestionReady) {
+      whereClause += " AND (ij.meme_id IS NULL OR ij.state = 'human_ready')";
+    }
     if (filter === "unreviewed") {
       whereClause += " AND c.corpus_status IS NULL";
     } else if (filter === "review_later") {
@@ -48,6 +54,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       SELECT COUNT(*) as cnt
       FROM memes m
       LEFT JOIN meme_curation c ON m.id = c.meme_id
+      ${ingestionJoin}
       ${whereClause}
     `).first<{ cnt: number }>();
     const total = countRes?.cnt ?? 0;
@@ -60,6 +67,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         c.humour_mechanisms, c.curator_note, c.reviewed_at, c.updated_at
       FROM memes m
       LEFT JOIN meme_curation c ON m.id = c.meme_id
+      ${ingestionJoin}
       ${whereClause}
       ORDER BY 
         CASE WHEN c.corpus_status IS NULL THEN 0 ELSE 1 END ASC,

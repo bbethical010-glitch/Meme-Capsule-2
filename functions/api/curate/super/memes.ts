@@ -8,6 +8,7 @@ import type { PagesFunction } from "../../../_shared/pages";
 import { json, type Env } from "../../../_shared/d1r2";
 import { validateSession } from "../../../_shared/catAuth";
 import { ensureCurationTables } from "../../../_shared/curateDb";
+import { hasIngestionSchema } from "../../../_shared/ingestion";
 
 interface MemeRow {
   id: string;
@@ -58,11 +59,18 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const offset = (page - 1) * perPage;
     const publicBase = (env.R2_PUBLIC_URL || "").replace(/\/+$/, "");
 
+    const ingestionReady = await hasIngestionSchema(env.DB);
     let baseQuery = `
       FROM memes m
       LEFT JOIN meme_curation_final f ON m.id = f.meme_id
-      WHERE m.id NOT IN (SELECT meme_id FROM meme_force_removals)
     `;
+    if (ingestionReady) {
+      baseQuery += " LEFT JOIN ingestion_jobs ij ON m.id = ij.meme_id\n";
+    }
+    baseQuery += " WHERE m.id NOT IN (SELECT meme_id FROM meme_force_removals)";
+    if (ingestionReady) {
+      baseQuery += " AND (ij.meme_id IS NULL OR ij.state = 'human_ready')";
+    }
     const params: (string | number)[] = [];
 
     if (search) {

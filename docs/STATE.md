@@ -4,9 +4,9 @@ status: production
 current_phase: Production Operations, Multi-Judge Consensus & Scaling
 architecture: Cloudflare Pages + Functions + D1 (SQLite) + R2 Media CDN
 deployed_url: https://meme-capsule-eww.pages.dev
-mobile_companion_app: com.meme.capsule (v3.3 / versionCode 24) on Google Play
+mobile_companion_app: com.meme.capsule (v3.8 / versionCode 29; v3.7 / versionCode 28 on Google Play)
 web_companion_platform: https://memecapsule.wtf
-updated: 2026-10-13
+updated: 2026-11-03
 ---
 
 # Project State: Meme Capsule (Serverless Edge Backend & Curation Engine)
@@ -56,10 +56,11 @@ The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been perma
 - **Admin Collection & Database APIs (`functions/api/admin/`)**:
   - `/api/admin/memes`: Prepared-statement D1 CRUD for meme metadata.
   - `/api/admin/upload`: Multi-part media upload streaming directly to Cloudflare R2 bucket.
+  - `/api/admin/ingestion/batches`, `/upload`, `/process`, and `/retry`: token-protected durable image-batch intake with resumable upload and advisory AI state.
   - `/api/admin/sync-r2`: Two-way reconciliation scanning R2 bucket objects into D1 rows.
   - `/api/admin/sql`: Token-protected raw SQL console execution engine with safety guards.
   - `/api/admin/memes/hard-delete`: Destructive cleanup endpoint for removing invalid records.
-  - `/api/admin/analytics/*`: Ranking recalculation, trend analysis, overview metrics, and algorithm reset challenges.
+  - `/api/admin/analytics/*`: Retained legacy ranking, trend, overview, and reset endpoints; the former Admin Analytics React tab was retired in Phase 3.
 - **Curation & Consensus APIs (`functions/api/curate/`)**:
   - `/api/curate/list`, `/api/curate/next`, `/api/curate/save`, `/api/curate/stats`: Multi-judge voting operations.
   - `/api/curate/approve`: Atomic single-judge adoption and authoritative finalization (writes to `meme_curation_final` and `memes`).
@@ -75,7 +76,7 @@ The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been perma
   - `/api/ai-judge/classify`, `/api/ai-judge/run/start`, `/api/ai-judge/run/stop`, `/api/ai-judge/run/progress`: Autonomous multimodal evaluation loop.
 
 ### B. Cloudflare D1 Database & Migrations (`d1/migrations/`)
-The database `meme-capsule-db` (SQLite at the edge) operates under additive migrations through 018:
+The database `meme-capsule-db` (SQLite at the edge) operates under additive migrations through 025:
 1. `000_complete_setup.sql`: Core schema initialization.
 2. `002_analytics.sql`: Event tracking, interactions, and ranking tables.
 3. `003_categorisation.sql`: Multi-judge accounts and editorial taxonomy.
@@ -94,6 +95,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
 16. `021_create_device_tokens.sql` and `022_rename_device_tokens_to_notification_tokens.sql`: FCM device registration storage and the canonical `notification_tokens` table name.
 17. `023_scheduled_notifications.sql`: Reusable notification messages, recurring schedules, and idempotent delivery-run audit records.
 18. `024_notification_content_files.sql`: Persistent R2-backed JSON/CSV content libraries attachable to schedules.
+19. `025_durable_meme_ingestion.sql`: Idempotent bulk image batches, upload/retry leases, independent Judge 4/5 evaluations, and the human-ready gate.
 
 ### C. Cloudflare R2 Media Storage
 - Bucket `memes` configured with public access enabled.
@@ -113,7 +115,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
     - **Compact AI Preview Strip**: Displays consensus verdicts and directional hints above the meme stage.
     - **Role-Based AI Console Gating**: Continuous AI Judge Console is hidden from human judges (1–3) on all viewports, visible to judge4/5 operators on desktop only.
     - **Quick Action Bar & Gesture Footer**: Complete touch alternatives for non-gesture accessibility; 3-column layout featuring `[✏️ MANUAL OVERRIDE]`, `[🔞 TAG NSFW]` (toggling client-gated 18+ tag matching desktop logic with real-time neon active state), and `[🗑️ FORCE REMOVE]`.
-- **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, manual `[🔄 REFRESH (Ctrl+R)]` control, and dark mode.
+- **`/admin`**: Administration console with grouped Collection/Curation/Operations navigation, D1 SQL console, R2 media sync, 5-metric status bar, local/backend meme editing, durable bulk image intake, manual `[🔄 REFRESH (Ctrl+R)]` control, and dark mode. The legacy Admin Analytics and Admin AI Categorisation views are retired; their uncertain/external backend routes remain preserved.
 - **Analytics route**: The Super Admin CTA opens `#/curate/analytics`, where the KPI cards and engagement trend read live consented Android analytics through curator-session-protected APIs. Secondary design panels remain preview-only until their backend contracts are implemented.
 - **Live Android analytics path**: Migration 015 adds `android_analytics_events`; `POST /api/analytics/events` accepts authenticated, consented Android batches, and curator-session-protected `/api/analytics/overview` plus `/api/analytics/trends` provide low-latency KPI reads. The analytics route refreshes these values every 30 seconds. Configure `ANALYTICS_APP_TOKEN` before enabling ingestion.
 - **Phase 1 contract freeze**: Migration 016 adds required `schema_version = 1` validation to Android event ingestion. The Android client must include this field on every event before production telemetry is enabled.
@@ -127,9 +129,8 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
 - **Phase 4 deletion lifecycle**: Migration 018 adds `android_analytics_deletion_audit`; superadmins can process verified anonymous-hash deletion requests through `POST /api/analytics/deletion`, with audit listing through the protected `GET` route.
 - **Phase 4 consent lineage**: Migration 019 stores `consent_version` with each Android event, defaulting legacy clients to `v1`. Consent denial/revocation remains local and must not emit behavioral telemetry.
 - **Production rollout plan**: The remaining work is tracked phase-by-phase in [ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md](./ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md), covering Android instrumentation, delivery reliability, ingestion hardening, lifecycle controls, dashboard completion, scale testing, and staged release gates.
-- **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, dark mode, and manual refresh controls.
-- **Random meme repetition controls**: `/api/random-meme` accepts up to 50 excluded meme IDs, samples from up to five candidates near a random key with wrap-around candidates, falls back safely when every eligible meme is excluded, and explicitly disables response caching. `POST /api/admin/rebalance-random-keys` redistributes active meme keys for maintenance.
-- **Deterministic shuffled deck catalog**: `GET /api/catalog` returns every active, curated `keep` meme's lightweight index fields, resolves missing image URLs from R2 storage paths, and uses a five-minute public cache for client-side deck shuffling.
+ - **`/admin`**: Administration console with grouped navigation, D1 SQL console, R2 media sync, 5-metric status bar, meme collection editing, dark mode, and manual refresh controls. Android telemetry, notification delivery, scheduled workers, and retained backend analytics contracts remain outside the retired UI.
+ - **Random meme repetition controls**: `/api/random-meme` accepts up to 50 excluded meme IDs, samples from up to five candidates near a random key with wrap-around candidates, falls back safely when every eligible meme is excluded, and explicitly disables response caching. `POST /api/admin/rebalance-random-keys` redistributes active meme keys for maintenance.
 - **`/categorise`**: Multi-topic taxonomy tagging, tone labeling, and humor mechanism tagging.
 - **`/ai-judge`**: Multimodal AI pre-curator loop powered by NVIDIA NIM Llama 3.2 Vision and universal vision models.
 - **`/reports`**: Token-gated content safety moderation desk.
@@ -193,8 +194,6 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
    - Heavy table scans are now completely bypassed when `include_stats=false`.
 2. **Client-Side Optimistic Progress Incrementation**:
    - [`src/curate/CurateApp.tsx`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/CurateApp.tsx) and [`src/curate/curateApi.ts`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/curateApi.ts) updated to fetch next memes with `include_stats=false` during continuous swiping.
-<<<<<<< HEAD
-
 ---
 
 ## 8. High-Performance Instant Curation Engine & Zero-Scan Edge Architecture (October 2026)
@@ -222,7 +221,41 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
    - Upgraded `.curate-mobile-quick-actions` to a 2-column grid (`grid-template-columns: repeat(2, 1fr)`) with enlarged 54px touch targets for `[✏️ MANUAL OVERRIDE]` and `[🗑️ FORCE REMOVE]`.
 
 
-=======
    - The UI optimistically advances the judge's reviewed counter (`reviewed + 1`, `remaining - 1`), eliminating wait times and dropping per-swipe D1 reads from **~10,000 to ~2 rows (99.97% drop)**.
    - Increases daily curation capacity from **166 memes/day to over 25,000 memes/day** under Cloudflare's Free tier with 0 cost.
->>>>>>> f06b107 (feat: complete Android analytics rollout phases)
+
+---
+
+## 9. Admin Overhaul Phase 4 — Durable Bulk Intake (November 3, 2026)
+
+- Migration `025_durable_meme_ingestion.sql` adds durable batch, item, and
+  independent advisory-evaluation state without changing publication or human
+  consensus tables.
+- `/admin` Add Memes now supports image-only multi-select/drag-drop review,
+  stable SHA-256 intake IDs, editable titles, duplicate warnings, bounded
+  concurrency, persisted progress, and failed-item retry.
+- New uploads create archived/inactive D1 metadata and cannot publish, activate,
+  create a final keep, or create a human vote. Curation routes expose a new
+  intake item only after both Judge 4 and Judge 5 evaluations reach `succeeded`
+  and the job transitions to `human_ready`.
+- The processor uses the existing encrypted `cat_judge_ai_presets` rows keyed by
+  `judge4` and `judge5`; it remains advisory and never writes `meme_curation`.
+- Local migration execution, schema PRAGMA checks, frontend build, ingestion
+  tests, analytics tests, and consensus tests passed. Remote PRAGMA verification
+  and production migration remain blocked by missing Cloudflare credentials.
+
+
+---
+
+## 10. Admin Overhaul Phase 5 — Meme Vault & 5 View Modes (November 3, 2026)
+
+- Added server-side query parameter processing (`page`, `per_page` clamped 1-100, `q`/`search`, `status`, `sort_by`, `sort_dir`, and `all`) to `GET /api/admin/memes`.
+- Replaced client-side corpus loading with single-query D1 aggregation computing top-level corpus statistics (`total`, `active`, `drafts`, `excluded`, `archived`, `nsfw`).
+- Enforced immutable normal IDs in `PATCH /api/admin/memes` with HTTP 400 rejection on ID mismatch to protect foreign keys across `meme_curation`, `meme_curation_final`, `meme_force_removals`, and `ingestion_jobs`.
+- Exported `fetchVaultMemes` in `src/lib/adminApi.ts` with typed pagination, stats, and query parameters.
+- Implemented **Five Vault View Modes** with persistent `localStorage` preference (`rows`, `compact`, `grid`, `table`, `split`) in `/admin`.
+- Added **Contextual Details Panel (Inspector)** displaying media preview, immutable ID copy, 2-tier lifecycle status, NSFW safety toggle, metadata badges, and actions.
+- Locked ID field in edit form for existing memes (`editingOriginalId`).
+- Added transparent partial bulk-action reporting for permanent deletions (`Processed X: Y succeeded, Z failed`).
+- Added unit test suite `tests/vault.test.ts` (5/5 passed) with `npm run test:vault` script.
+- Verified build and all 4 test suites: `npm run build`, `npm run test:vault`, `npm run test:ingestion`, `npm run test:analytics`, and `node --test tests/curationConsensus.test.mjs`.

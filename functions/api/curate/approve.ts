@@ -11,6 +11,7 @@ import { validateSession } from "../../_shared/catAuth";
 import { ensureCurationTables } from "../../_shared/curateDb";
 import { hardRemoveMeme } from "../../_shared/forceRemove";
 import { resolveHumanConsensus, type AiFallback, type HumanVote } from "../../_shared/curationConsensus";
+import { getIngestionJobState } from "../../_shared/ingestion";
 
 interface ApprovePayload {
   meme_id?: string;
@@ -76,6 +77,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     if (!memeId) return json({ error: "meme_id is required." }, { status: 400 });
     if (!corpusStatus || !["keep", "excluded", "duplicate", "review_later"].includes(corpusStatus)) {
       return json({ error: "corpus_status must be 'keep', 'excluded', 'duplicate', or 'review_later'." }, { status: 400 });
+    }
+
+    const ingestionState = await getIngestionJobState(env.DB, memeId);
+    if (ingestionState && ingestionState !== "human_ready") {
+      return json({
+        error: "This new intake item is not human-ready yet. Both advisory evaluations must succeed before a human vote is accepted.",
+        ingestion_state: ingestionState
+      }, { status: 409 });
     }
 
     const { results: judgeRows } = await env.DB.prepare(`

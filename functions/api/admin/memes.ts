@@ -50,6 +50,8 @@ const toD1Row = (meme: Partial<Meme>) => {
   const mediaType = allowedMediaType.has(String(meme.media_type)) ? meme.media_type : "image";
   const inputMethod = allowedInputMethod.has(String(meme.input_method)) ? meme.input_method : "url";
   const rarity = allowedRarity.has(String(meme.rarity)) ? meme.rarity : "Common";
+  const isNsfw = meme.is_nsfw ? 1 : 0;
+  const nsfwFlaggedBy = meme.is_nsfw ? (meme.nsfw_flagged_by || "admin") : null;
 
   return {
     id,
@@ -66,7 +68,9 @@ const toD1Row = (meme: Partial<Meme>) => {
     is_active: status === "active" ? 1 : 0,
     rights_note: meme.rights_note?.trim() || "reviewed",
     share_text: meme.share_text?.trim() || meme.title?.trim() || "Spawned from Meme Capsule",
-    random_key: Math.random()
+    random_key: Math.random(),
+    is_nsfw: isNsfw,
+    nsfw_flagged_by: nsfwFlaggedBy
   };
 };
 
@@ -78,25 +82,135 @@ const parsePayload = async <T>(request: Request) => {
   }
 };
 
-// GET /api/admin/memes — list all memes for admin review
+// GET /api/admin/memes — server-side query, stats, filtering, and stable pagination
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const adminError = requireAdmin(request, env);
   if (adminError) return adminError;
 
-  const { results } = await env.DB.prepare(
-    `SELECT m.*, f.corpus_status as final_status
+  const url = new URL(request.url);
+  const isAll = url.searchParams.get("all") === "true";
+  const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const perPage = Math.min(100, Math.max(1, parseInt(url.searchParams.get("per_page") || "25", 10) || 25));
+  const q = (url.searchParams.get("q") || url.searchParams.get("search") || "").trim();
+  const statusFilter = (url.searchParams.get("status") || "all").toLowerCase().trim();
+  const sortByParam = (url.searchParams.get("sort_by") || "uploaded_at").toLowerCase().trim();
+  const sortDir = (url.searchParams.get("sort_dir") || "desc").toLowerCase().trim() === "asc" ? "ASC" : "DESC";
+
+  // Allowed sort columns for SQL injection protection
+  const sortColumnMap: Record<string, string> = {
+    uploaded_at: "uploaded_at",
+    created_at: "uploaded_at",
+    title: "title",
+    id: "id",
+    likes_count: "likes_count",
+    views_count: "views_count",
+    share_count: "share_count",
+    category: "category",
+    status: "status"
+  };
+  const sortCol = sortColumnMap[sortByParam] || "uploaded_at";
+
+  // 1. Calculate top-level corpus statistics across the entire database in one query
+  const statsRes = await env.DB.prepare(
+    `SELECT
+       COUNT(*) as total,
+       SUM(CASE WHEN m.status = 'active' AND m.is_active = 1 THEN 1 ELSE 0 END) as active,
+       SUM(CASE WHEN m.status = 'draft' THEN 1 ELSE 0 END) as drafts,
+       SUM(CASE WHEN (m.curation_status = 'excluded' OR f.corpus_status = 'excluded') THEN 1 ELSE 0 END) as excluded,
+       SUM(CASE WHEN m.status = 'archived' AND (m.curation_status != 'excluded' OR m.curation_status IS NULL) AND (f.corpus_status != 'excluded' OR f.corpus_status IS NULL) THEN 1 ELSE 0 END) as archived,
+       SUM(CASE WHEN m.is_nsfw = 1 THEN 1 ELSE 0 END) as nsfw
      FROM memes m
-     LEFT JOIN meme_curation_final f ON m.id = f.meme_id
-     ORDER BY m.uploaded_at DESC`
-  ).all<D1MemeRow & { final_status?: string | null }>();
+     LEFT JOIN meme_curation_final f ON m.id = f.meme_id`
+  ).first<{
+    total: number;
+    active: number;
+    drafts: number;
+    excluded: number;
+    archived: number;
+    nsfw: number;
+  }>();
+
+  // 2. Build dynamic filtering criteria
+  const whereClauses: string[] = [];
+  const binds: any[] = [];
+
+  if (statusFilter === "active") {
+    whereClauses.push("m.status = 'active' AND m.is_active = 1");
+  } else if (statusFilter === "draft") {
+    whereClauses.push("m.status = 'draft'");
+  } else if (statusFilter === "excluded") {
+    whereClauses.push("(m.curation_status = 'excluded' OR f.corpus_status = 'excluded')");
+  } else if (statusFilter === "archived") {
+    whereClauses.push("m.status = 'archived' AND (m.curation_status != 'excluded' OR m.curation_status IS NULL) AND (f.corpus_status != 'excluded' OR f.corpus_status IS NULL)");
+  } else if (statusFilter === "nsfw") {
+    whereClauses.push("m.is_nsfw = 1");
+  }
+
+  if (q) {
+    const term = `%${q.toLowerCase()}%`;
+    whereClauses.push(
+      "(LOWER(m.title) LIKE ? OR LOWER(m.id) LIKE ? OR LOWER(m.category) LIKE ? OR LOWER(m.tags) LIKE ?)"
+    );
+    binds.push(term, term, term, term);
+  }
+
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+  // 3. Count total matching rows for pagination
+  let totalCount = Number(statsRes?.total || 0);
+  if (whereClauses.length > 0) {
+    const countRes = await env.DB.prepare(
+      `SELECT COUNT(*) as filtered_total
+       FROM memes m
+       LEFT JOIN meme_curation_final f ON m.id = f.meme_id
+       ${whereSql}`
+    ).bind(...binds).first<{ filtered_total: number }>();
+    totalCount = Number(countRes?.filtered_total || 0);
+  }
+
+  // 4. Query paginated results with stable ordering
+  let querySql = `
+    SELECT m.*, f.corpus_status as final_status
+    FROM memes m
+    LEFT JOIN meme_curation_final f ON m.id = f.meme_id
+    ${whereSql}
+    ORDER BY m.${sortCol} ${sortDir}, m.id DESC
+  `;
+
+  const queryBinds = [...binds];
+  if (!isAll) {
+    querySql += " LIMIT ? OFFSET ?";
+    const offset = (page - 1) * perPage;
+    queryBinds.push(perPage, offset);
+  }
+
+  const stmt = env.DB.prepare(querySql);
+  const { results } = queryBinds.length > 0
+    ? await stmt.bind(...queryBinds).all<D1MemeRow & { final_status?: string | null }>()
+    : await stmt.all<D1MemeRow & { final_status?: string | null }>();
 
   return json({
-    memes: results.map((row) => ({
+    memes: (results || []).map((row) => ({
       ...normalizeRow(env, row),
       final_status: row.final_status || null,
       curation_status: row.curation_status || row.final_status || null,
-      is_finalized_keep: row.final_status === "keep"
+      is_finalized_keep: row.final_status === "keep",
+      is_nsfw: Boolean(row.is_nsfw)
     })),
+    pagination: {
+      page: isAll ? 1 : page,
+      per_page: isAll ? (results?.length || 0) : perPage,
+      total: totalCount,
+      total_pages: isAll ? 1 : Math.max(1, Math.ceil(totalCount / perPage))
+    },
+    stats: {
+      total: Number(statsRes?.total || 0),
+      active: Number(statsRes?.active || 0),
+      drafts: Number(statsRes?.drafts || 0),
+      excluded: Number(statsRes?.excluded || 0),
+      archived: Number(statsRes?.archived || 0),
+      nsfw: Number(statsRes?.nsfw || 0)
+    },
     config: {
       hasR2PublicUrl: Boolean(env.R2_PUBLIC_URL),
       hasDatabase: Boolean(env.DB)
@@ -128,12 +242,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     await env.DB.prepare(
-      `INSERT INTO memes (id, title, image_url, storage_path, source_link, category, tags, rarity, status, media_type, input_method, is_active, rights_note, share_text, random_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO memes (id, title, image_url, storage_path, source_link, category, tags, rarity, status, media_type, input_method, is_active, rights_note, share_text, random_key, is_nsfw, nsfw_flagged_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       row.id, row.title, row.image_url, row.storage_path, row.source_link,
       row.category, row.tags, row.rarity, row.status, row.media_type,
-      row.input_method, row.is_active, row.rights_note, row.share_text, row.random_key
+      row.input_method, row.is_active, row.rights_note, row.share_text, row.random_key,
+      row.is_nsfw, row.nsfw_flagged_by
     ).run();
 
     const { results } = await env.DB.prepare(
@@ -146,7 +261,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   }
 };
 
-// PATCH /api/admin/memes — update one meme metadata row
+// PATCH /api/admin/memes — update one meme metadata row with immutable normal ID protection
 export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   const adminError = requireAdmin(request, env);
   if (adminError) return adminError;
@@ -159,6 +274,14 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     const row = toD1Row(payload.meme || {});
+
+    // Enforce immutable normal IDs to prevent foreign key corruption
+    if (row.id !== originalId) {
+      return json(
+        { error: "Meme ID is immutable once created. Changing IDs risks foreign key corruption in curation, final consensus, and audit logs." },
+        { status: 400 }
+      );
+    }
 
     // Superadmin Gate: Cannot be ACTIVE unless finalized as 'keep' in meme_curation_final
     if (row.status === "active") {
@@ -185,20 +308,22 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
 
     await env.DB.prepare(
       `UPDATE memes SET
-        id = ?, title = ?, image_url = ?, storage_path = ?, source_link = ?,
+        title = ?, image_url = ?, storage_path = ?, source_link = ?,
         category = ?, tags = ?, rarity = ?, status = ?, media_type = ?,
-        input_method = ?, is_active = ?, rights_note = ?, share_text = ?, random_key = ?
+        input_method = ?, is_active = ?, rights_note = ?, share_text = ?, random_key = ?,
+        is_nsfw = ?, nsfw_flagged_by = ?
        WHERE id = ?`
     ).bind(
-      row.id, row.title, row.image_url, row.storage_path, row.source_link,
+      row.title, row.image_url, row.storage_path, row.source_link,
       row.category, row.tags, row.rarity, row.status, row.media_type,
       row.input_method, row.is_active, row.rights_note, row.share_text, row.random_key,
+      row.is_nsfw, row.nsfw_flagged_by,
       originalId
     ).run();
 
     const { results } = await env.DB.prepare(
       "SELECT * FROM memes WHERE id = ?"
-    ).bind(row.id).all<D1MemeRow>();
+    ).bind(originalId).all<D1MemeRow>();
 
     if (!results[0]) {
       return json({ error: "No meme was updated." }, { status: 404 });

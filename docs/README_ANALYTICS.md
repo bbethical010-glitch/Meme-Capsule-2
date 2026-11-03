@@ -9,7 +9,7 @@ The analytics system is built natively on Cloudflare using three core components
 1.  **Frontend Tracking SDK (`src/analytics/`)**: A robust TypeScript layer inside the Capacitor/web app that queues events (`view`, `skip`, `like`, `share`, etc.) and flushes them in batches via `fetch` or `navigator.sendBeacon`. It prevents UI blocking and handles offline requeuing. Device IDs are anonymized using SHA-256 browser fingerprints.
 2.  **Ingestion API (`functions/api/events.ts`)**: A Cloudflare Pages Function that receives batched events. It validates, deduplicates, and inserts raw event data into the `meme_events` D1 table.
 3.  **Aggregation Worker (`workers/analyticsAggregator.ts`)**: A standalone Cloudflare Worker triggered via Cron (`*/30 * * * *`). It reads the raw `meme_events` table, calculates heavy metrics (engagement, virality, retention, percentiles) using pure functions (`analyticsFormulas.ts`), and writes the consolidated state to the `meme_analytics` table for fast O(1) reads.
-4.  **Dashboard UI (`src/admin/analytics-dashboard/`)**: A standalone React dashboard integrated into the Admin panel, protected by `AdminGate` (PIN based). Pure SVG charts, actionable insights, and full metric breakdowns.
+4.  **Retained backend contract**: The legacy Admin analytics APIs and aggregation worker remain available for operational compatibility. The former React dashboard under `src/admin/analytics-dashboard/` was retired from `/admin` in Phase 3; Android telemetry and its separate `/api/analytics/*` readers remain active.
 
 The Android KPI path is now available separately from the legacy web interaction
 path: `POST /api/analytics/events` validates consented Android batches and writes

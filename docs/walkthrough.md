@@ -1,4 +1,332 @@
-# AI-Judgement Review Workflow Walkthrough
+# Meme Capsule — Implementation Walkthrough and Phase History
+
+> **History scope:** This document records the Admin Overhaul plan's Phases 0–7.
+> It also preserves the older Android analytics and curation verification notes
+> that were already present in this file. Those similarly named analytics phases
+> are separate from the Admin Overhaul phase numbers.
+>
+> **Last updated:** 2026-11-03 10:33:30 +05:30
+
+## Source-of-truth and current branch state
+
+- The complete Admin Overhaul Phase 0–7 plan is available in the governing task
+  instructions and is reproduced in verified scope form below. The Phase 0 audit
+  is `docs/ADMIN_OVERHAUL_AUDIT.md`.
+- The workspace was synchronized with `origin/main`, which advanced from
+  `2cafbe8d...` to `7c32bda` during the Phase 4 start check. The remote change is
+  the unrelated random-meme repetition/rebalancing work in
+  `functions/_shared/d1r2.ts`, `functions/api/random-meme.ts`,
+  `functions/api/admin/rebalance-random-keys.ts`, and related documentation.
+- Existing local work was preserved through the fast-forward. The tracked root
+  `AGENT_RULES.md` deletion remains pre-existing workspace state; the complete
+  canonical `docs/AGENT_RULES.md` was read before this phase work.
+- No production deployment, migration, R2 deletion, or secret-bearing operation
+  was performed during the Phase 4 groundwork.
+
+## Admin Overhaul Phase 0 — Audit and scope lock
+
+### Objective
+
+Audit the current Admin Console, curation, AI, public delivery, authentication,
+R2/D1 operations, migration history, and documentation before any schema or
+behavior change.
+
+### Verified implementation details
+
+- Read the repository rules, project context, current state, database references,
+  migration inventory, API/UI entry points, worker code, and existing tests.
+- Confirmed `main` was synchronized with `origin/main` at the original audit
+  baseline before Phase 3 work.
+- Confirmed intentional duplicate migration prefixes `004`, `011`, and `021`,
+  migration history through `024`, and no existing `025_` migration.
+- Mapped the distinct AI stores (`ai_curation_predictions`,
+  `ai_judge_processed`, and legacy `memes.ai_*` contracts), human consensus,
+  public final-`keep` gating, R2/D1 operations, and Android/notification systems.
+- Recorded the current governance concern: the continuous browser AI loop can
+  invoke the human approval endpoint, while the approved architecture requires
+  AI to remain advisory.
+- Recorded the clean local migration-chain failure at historical migration 008
+  because `ai_curation_predictions` is not created before its index.
+
+### Files and records
+
+- `docs/ADMIN_OVERHAUL_AUDIT.md`: complete audit, dependency map, candidate
+  schema/state design, compatibility strategy, required checks, and blockers.
+- Existing repository rules, database docs, state docs, migration files, API
+  routes, workers, and test files were inspected without functional changes.
+
+### Verification and status
+
+- `git fetch origin`: passed at audit time.
+- Frontend build, analytics tests, and consensus tests passed at the audit
+  baseline; Functions typecheck and clean local migration apply exposed recorded
+  pre-existing failures.
+- **Status:** Completed as an audit. Production behavior and schema were not
+  changed in Phase 0.
+
+## Admin Overhaul Phase 1 — Durable ingestion state
+
+### Objective and planned implementation
+
+Introduce a unique `025_` migration and durable batch/item/evaluation state
+without overloading `memes.status`. The planned states are batch/item queued,
+processing, retry-wait, failed, and human-ready, with idempotency, leases,
+bounded errors, independent AI evaluation records, and an optional media
+operation saga.
+
+### Implementation record
+
+- Added `d1/migrations/025_durable_meme_ingestion.sql` with additive
+  `ingestion_batches`, `ingestion_jobs`, and `ingestion_ai_evaluations` tables.
+  The tables store stable idempotency keys, generated intake IDs, content hashes,
+  upload state, retry/lease state, bounded errors, and per-judge advisory result
+  fields. Historical migrations were not edited.
+- Added `functions/_shared/ingestion.ts` for server-side limits, image-signature
+  checks, SHA-256 helpers, schema availability checks, batch status derivation,
+  and read-only human-ready lookup. New intake tables do not replace
+  `memes.status` or human curation tables.
+- Added authenticated `/api/admin/ingestion/batches` creation/read,
+  `/api/admin/ingestion/upload`, and `/api/admin/ingestion/retry` contracts.
+  Batch creation is idempotent; upload uses unique R2 keys and persists a
+  private archived/inactive `memes` row only after R2 success. R2-success/D1
+  failure remains recoverable through the durable job row.
+- Added queue compatibility gates to `functions/api/curate/next.ts`,
+  `functions/api/curate/list.ts`, and `functions/api/curate/super/memes.ts`.
+  `functions/api/curate/approve.ts` and `functions/api/curate/save.ts` reject
+  editorial votes for a new intake item until its job is `human_ready`; legacy
+  rows without a job retain the existing behavior.
+
+### Verification and status
+
+- The migration SQL was executed against the disposable local D1 state and all
+  three new tables were verified with `PRAGMA table_info(...)`.
+- Remote schema verification was attempted read-only but is blocked because this
+  environment has no `CLOUDFLARE_API_TOKEN`; no production migration or query
+  was executed.
+- **Status:** Implemented locally. Production use requires applying migration
+  `025` after the remote migration-history/bootstrap decision is resolved.
+
+## Admin Overhaul Phase 2 — AI preprocessing and human-ready gating
+
+### Objective and planned implementation
+
+Require both configured advisory AI evaluations to persist successfully before a
+new intake item becomes eligible for human curation. The planned worker must
+claim/recover jobs, retry bounded transient failures, validate structured output,
+persist results, and never write human ballots or call human approval endpoints.
+New items remain archived and inactive; legacy items without ingestion jobs retain
+legacy queue behavior.
+
+### Implementation record
+
+- Added `functions/api/admin/ingestion/process.ts`, a bounded, lease-aware
+  processor for one uploaded job at a time. It loads the configured Judge 4 and
+  Judge 5 advisory presets, fetches the private R2 object, validates structured
+  taxonomy output, persists independent evaluation rows, and retries transient
+  provider failures up to three attempts with bounded backoff.
+- The processor never calls `/api/curate/approve`, never writes `meme_curation`,
+  never creates a final keep, and never activates a meme. Only both successful
+  evaluation rows transition the job to `human_ready`.
+- An optional compatibility write updates `ai_curation_predictions` for the
+  existing read-only advisory preview; durable evaluation rows remain the
+  readiness source. Missing legacy preview storage does not block readiness.
+- The processor uses existing encrypted `cat_judge_ai_presets` records for the
+  stable `judge4` and `judge5` keys. Missing provider configuration is recorded
+  as a bounded terminal item error that can be retried after configuration.
+
+### Verification and status
+
+- New intake gating and the advisory-only boundary are covered by code paths and
+  the frontend status surface; existing 9-case human consensus tests remain
+  unchanged and pass.
+- This release uses an authenticated, UI-driven bounded processor endpoint
+  rather than adding a separate scheduled Worker. Durable leases and retry state
+  make later Worker scheduling additive without changing the data contract.
+- **Status:** Implemented locally with the documented request-driven processor
+  decision. Provider configuration and production migration remain rollout
+  prerequisites.
+
+## Admin Overhaul Phase 3 — Navigation and retired Admin views
+
+- Reorganized `/admin` into Collection, Curation, and Operations groups while
+  retaining the Neo-Brutalist visual system.
+- Added an accessible desktop collapse/icon-rail control with hover/focus
+  expansion, a pin/toggle control, keyboard focus states, and a mobile drawer
+  with an overlay close action.
+- Added direct navigation from the Admin Console to Human Curation (`/curate`),
+  AI Judge Workflow (`/ai-judge`), and Reports / Moderation (`/reports`).
+- Retired the Admin Analytics and legacy Admin AI Categorisation React views and
+  deleted their exclusive frontend modules. Legacy Admin analytics/AI backend
+  endpoints, Android telemetry, notification APIs/workers, `/categorise`, and
+  the separate `/ai-judge` workflow remain preserved.
+- No database migration or schema change was made in this phase.
+- Verification: `npm run build` passed with the existing Vite chunk-size warning;
+  `npm run test:analytics` passed 5/5; `node --test
+  tests/curationConsensus.test.mjs` passed 9/9; targeted source-reference and
+  documentation checks found no remaining Admin Analytics or legacy Admin AI UI
+  imports.
+
+### Phase 3 implementation record
+
+- `src/admin/AdminApp.tsx`: grouped Collection/Curation/Operations navigation,
+  direct links to `/curate`, `/ai-judge`, and `/reports`, accessible menu state,
+  and Add Memes routing.
+- `src/admin/admin.css`: responsive mobile drawer/backdrop, desktop collapse/icon
+  rail, hover/focus expansion, labels/tooltips, and keyboard focus styling.
+- Deleted exclusive frontend modules under `src/admin/ai/` and
+  `src/admin/analytics-dashboard/`.
+- Updated `docs/ADMIN_OVERHAUL_AUDIT.md`, `docs/DATABASE.md`, `docs/GEMINI.md`,
+  `docs/PROJECT_STRUCTURE.md`, `docs/README.md`, `docs/README_ANALYTICS.md`,
+  `docs/STATE.md`, and this walkthrough. Backend analytics, Android telemetry,
+  notification workers, `/categorise`, `/curate`, and `/ai-judge` were retained.
+- **Status:** Completed locally; no migration or production deployment.
+
+## Admin Overhaul Phase 4 — Bulk Add Memes workspace
+
+### Objective and exact scope from the approved plan
+
+Provide reliable, resumable bulk image ingestion in the Admin Console:
+
+1. Multi-select and drag/drop image intake.
+2. Review grid/table with thumbnails, filenames, generated stable IDs, editable
+   titles, size/type, duplicate warnings, and validation state.
+3. Remove files before submission.
+4. Client and server validation; first release rejects video clearly.
+5. Confirm the batch and upload with bounded concurrency.
+6. Create draft metadata and durable ingestion jobs idempotently.
+7. Show per-file upload and AI-processing state.
+8. Retry only failed items and preserve progress across refreshes.
+9. Use unique R2 keys, server-side type/size/count limits, content hashes where
+   feasible, stable retry identities, and recoverable R2-success/D1-failure
+   handling.
+10. Never publish, create a final keep, set `is_active = 1`, or create a human
+    ballot as a side effect of upload.
+
+### Implementation record
+
+- Added `src/admin/BulkIngestionWorkspace.tsx` and
+  `src/admin/bulkIngestion.ts`. The Admin Add Memes workspace now supports
+  multi-select and drag/drop image review, thumbnails, editable titles,
+  generated stable IDs, SHA-256 identities, size/type validation, duplicate
+  warnings, removal before submission, per-item upload/AI states, resume-safe
+  status refresh, and retry-only-failed actions.
+- Added bulk API methods to `src/lib/adminApi.ts` and mounted the workspace from
+  `src/admin/AdminApp.tsx` without removing the existing single-meme editor.
+- Added responsive Neo-Brutalist bulk intake styling to `src/admin/admin.css`.
+  The UI limits batches to 50 images, 20 MiB per image, and 200 MiB total, and
+  clearly rejects video in the first release.
+- Added `tests/bulkIngestion.test.ts` and the `npm run test:ingestion` script for
+  supported-image/video rejection, size validation, stable hashing, and batch
+  confirmation boundaries.
+
+### Database and configuration changes
+
+- No existing schema or configuration was edited. Migration `025` is additive
+  and is not applied to production by this implementation.
+- AI processing expects existing encrypted presets for `judge4` and `judge5`;
+  no credentials or secret values are stored in source or documentation.
+
+### Verification and status
+
+- `npm run build`: passed with the existing Vite chunk-size warning.
+- `npm run test:ingestion`: passed 4/4.
+- `npm run test:analytics`: passed 5/5.
+- `node --test tests/curationConsensus.test.mjs`: passed 9/9.
+- `npx tsc -p tsconfig.functions.json --noEmit`: still reports only the
+  previously recorded baseline Functions errors; no new error was reported for
+  the ingestion files.
+- Local `025` SQL execution and all three new-table PRAGMA checks passed.
+- Remote PRAGMA verification is blocked by missing Cloudflare credentials; no
+  production D1/R2 operation, deployment, or secret-bearing action occurred.
+- **Status:** Completed locally for the approved Phase 4 boundary. Production
+  rollout remains gated on migration `025`, two configured advisory presets,
+  and the existing remote bootstrap decision. Refresh recovery restores all
+  server-side progress; an upload that had not started must be re-selected after
+  a browser refresh because browsers do not persist File objects in localStorage.
+
+## Admin Overhaul Phase 5 — Meme Vault and data access
+
+### Objective and planned scope
+
+Add server-side search/filtering/pagination and stable ordering, five Vault view
+modes, contextual details panel, immutable normal IDs, explicit lifecycle/curation
+semantics, and visible partial bulk-action results without weakening the public
+final-`keep` gate.
+
+### Implementation record
+
+- Updated `functions/api/admin/memes.ts` with server-side query parameter handling
+  (`page`, `per_page` clamped 1-100, `q`/`search`, `status`, `sort_by`, `sort_dir`, and `all`).
+- Single high-performance D1 aggregation query calculates top-level stats (`total`, `active`,
+  `drafts`, `excluded`, `archived`, `nsfw`) across the entire corpus.
+- Dynamic parameterized SQL filtering with safe column whitelist protects against SQL injection
+  and ensures stable pagination (`LIMIT ? OFFSET ?`).
+- Enforced immutable normal IDs in `onRequestPatch`: updates attempting to alter `row.id` are
+  strictly rejected with HTTP 400 error, protecting foreign key constraints across curation,
+  final consensus, and audit tables.
+- Updated `src/lib/adminApi.ts` with typed interfaces (`VaultViewMode`, `VaultQueryParams`,
+  `VaultStats`, `VaultPagination`, `VaultListResponse`) and exported `fetchVaultMemes`.
+- Implemented **Five Vault View Modes** with persistent `localStorage` preference in `src/admin/AdminApp.tsx`
+  and `src/admin/admin.css`:
+  1. `rows`: Detailed list rows with thumbnail, metadata badges, and actions.
+  2. `compact`: Dense 38px single-line scanner for rapid inspection of dozens of memes.
+  3. `grid`: Card gallery with 150px previews, hover zoom, and quick action bar.
+  4. `table`: Tabular data sheet with sticky headers and column-based comparisons.
+  5. `split`: Split inspector mode with main list on the left and sticky details on the right.
+- Implemented **Contextual Details Panel (Inspector)** displaying:
+  - High-res media preview with direct R2 link.
+  - Immutable ID with one-click clipboard copy (`📋 COPY ID`).
+  - 2-tier lifecycle matrix (Pipeline State: `ACTIVE`/`DRAFT`/`ARCHIVED`; Curation Status: `KEEP`/`EXCLUDED`/`UNRESOLVED`/`PENDING`).
+  - NSFW safety controls with instant toggle CTA.
+  - Complete metadata grid (Category, Tags chips, Media Type, Input Method, Rarity, Storage Path, Likes).
+  - Quick action buttons (Edit in Form, Open in /curate, Hard Delete).
+- Locked Meme ID input in the Edit form when editing existing memes (`disabled`, `readOnly`, with `IMMUTABLE` badge).
+- Added visible partial bulk-action reporting for permanent purges (`Processed X: Y succeeded, Z failed`).
+- Added comprehensive unit test suite in `tests/vault.test.ts` covering pagination math, search clamping,
+  sort sanitization, immutable ID protection, and bulk action reporting. Configured `npm run test:vault` in `package.json`.
+
+### Verification and status
+
+- `npm run test:vault`: passed 5/5.
+- `npm run test:ingestion`: passed 4/4.
+- `npm run test:analytics`: passed 5/5.
+- `node --test tests/curationConsensus.test.mjs`: passed 9/9.
+- `npm run build`: passed (0 errors, 1629 modules transformed).
+- **Status:** Completed locally.
+
+## Admin Overhaul Phase 6 — Human-judge image editor
+
+### Objective and planned scope
+
+Prototype a lazy-loaded Konva + React-Konva still-image editor for Judges 1–3
+with crop/rotate, drawing, shapes, text, actual blur/mosaic, undo/redo,
+preview/reset, and source-resolution export. Save must use a durable R2/D1
+compare-and-swap media replacement saga with unique keys, revision checks, audit
+records, and retryable cleanup. Editing must remain separate from votes.
+
+### Verified history and status
+
+- No image-editor dependency, editor route, media-operation migration, revision
+  endpoint, or canonical replacement saga exists in the current repository.
+- Existing destructive R2/D1 hazards are documented in the Phase 0 audit and have
+  not been changed by this walkthrough task.
+- **Status:** Pending; not started.
+
+## Admin Overhaul Phase 7 — End-to-end verification and rollout
+
+### Objective and planned scope
+
+Run publication/curation, AI reliability, ingestion/recovery, Admin UI/access,
+R2/D1, Android telemetry, notification, and editor regression checks; verify local
+and staging behavior; document rollout/rollback; and only deploy with explicit
+authorization.
+
+### Verified history and status
+
+- Existing analytics and curation tests document earlier subsystem verification,
+  but the Admin Overhaul Phase 7 acceptance suite has not been created or run.
+- No Admin Overhaul production migration or deployment has occurred.
+- **Status:** Pending until Phases 1–6 are implemented and verified.
 
 ## Android Analytics Phase 1 Contract Freeze
 

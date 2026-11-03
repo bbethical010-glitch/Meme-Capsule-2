@@ -1,0 +1,430 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createIngestionBatch,
+  getIngestionBatch,
+  processIngestionItem,
+  retryIngestionItems,
+  uploadIngestionItem,
+  type IngestionBatchStatus,
+  type IngestionItemStatus
+} from "../lib/adminApi";
+import {
+  BULK_MAX_BATCH_BYTES,
+  BULK_MAX_FILE_BYTES,
+  BULK_MAX_ITEMS,
+  applyDuplicateWarnings,
+  canConfirmBulk,
+  createBulkDraftItem,
+  formatBytes,
+  totalDraftBytes,
+  type BulkDraftItem
+} from "./bulkIngestion";
+
+const SESSION_KEY = "meme-capsule:admin-ingestion-session";
+const MAX_CONCURRENCY = 3;
+
+type BulkIngestionWorkspaceProps = {
+  adminToken: string;
+  backendMode: boolean;
+  onNotice: (message: string) => void;
+  onBackendChanged: () => Promise<void> | void;
+};
+
+type PersistedItem = Pick<BulkDraftItem, "clientItemId" | "memeId" | "fileName" | "title" | "mimeType" | "byteSize" | "contentHash">;
+type PersistedSession = { batchId: string; items: PersistedItem[] };
+
+const readPersistedSession = (): PersistedSession | null => {
+  try {
+    const raw = window.localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedSession;
+    return parsed?.batchId && Array.isArray(parsed.items) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const statusForItem = (item: BulkDraftItem) => {
+  if (!item.server) return "READY TO UPLOAD";
+  if (item.server.state === "human_ready") return "HUMAN READY";
+  if (item.server.upload_state === "failed") return "UPLOAD FAILED";
+  if (item.server.upload_state !== "uploaded") return "WAITING FOR UPLOAD";
+  if (item.server.state === "processing") return "AI PROCESSING";
+  if (item.server.state === "retry_wait") return "RETRY WAITING";
+  if (item.server.state === "failed") return "AI FAILED";
+  return "UPLOADED / QUEUED";
+};
+
+const statusClass = (item: BulkDraftItem) => {
+  const status = statusForItem(item);
+  if (status === "HUMAN READY") return "ready";
+  if (status.includes("FAILED")) return "failed";
+  if (status.includes("PROCESSING")) return "processing";
+  return "queued";
+};
+
+const mergeServerStatus = (items: BulkDraftItem[], status: IngestionBatchStatus) =>
+  items.map((item) => {
+    const server = status.items.find((candidate) => candidate.idempotency_key === item.clientItemId);
+    return server
+      ? {
+          ...item,
+          title: server.title || item.title,
+          duplicateWarning: server.duplicate_warning ? `Duplicate of existing job ${server.duplicate_warning}.` : item.duplicateWarning,
+          server
+        }
+      : item;
+  });
+
+const runBounded = async <T,>(values: T[], worker: (value: T) => Promise<void>) => {
+  let cursor = 0;
+  const runWorker = async () => {
+    while (cursor < values.length) {
+      const value = values[cursor++];
+      await worker(value);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENCY, values.length) }, runWorker));
+};
+
+export default function BulkIngestionWorkspace({
+  adminToken,
+  backendMode,
+  onNotice,
+  onBackendChanged
+}: BulkIngestionWorkspaceProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [items, setItems] = useState<BulkDraftItem[]>([]);
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [batchStatus, setBatchStatus] = useState<IngestionBatchStatus | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isWorking, setIsWorking] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const itemsRef = useRef(items);
+
+  const submitted = Boolean(batchId);
+  const totalBytes = useMemo(() => totalDraftBytes(items), [items]);
+  const invalidCount = useMemo(() => items.filter((item) => item.validationErrors.length > 0).length, [items]);
+  const readyCount = batchStatus?.batch.ready_items || 0;
+  const failedItems = useMemo(
+    () => items.filter((item) => item.server && (item.server.state === "failed" || item.server.upload_state === "failed")),
+    [items]
+  );
+
+  const saveSession = useCallback((nextBatchId: string | null, nextItems: BulkDraftItem[]) => {
+    if (!nextBatchId) {
+      window.localStorage.removeItem(SESSION_KEY);
+      return;
+    }
+    const persisted: PersistedSession = {
+      batchId: nextBatchId,
+      items: nextItems.map(({ clientItemId, memeId, fileName, title, mimeType, byteSize, contentHash }) => ({
+        clientItemId,
+        memeId,
+        fileName,
+        title,
+        mimeType,
+        byteSize,
+        contentHash
+      }))
+    };
+    window.localStorage.setItem(SESSION_KEY, JSON.stringify(persisted));
+  }, []);
+
+  const applyStatus = useCallback((status: IngestionBatchStatus) => {
+    setBatchStatus(status);
+    setItems((current) => mergeServerStatus(current, status));
+  }, []);
+
+  const refreshBatch = useCallback(async (id = batchId) => {
+    if (!id || !adminToken.trim()) return null;
+    const status = await getIngestionBatch(adminToken, id);
+    applyStatus(status);
+    return status;
+  }, [adminToken, applyStatus, batchId]);
+
+  useEffect(() => {
+    if (!adminToken.trim() || !backendMode) return;
+    const persisted = readPersistedSession();
+    if (!persisted) return;
+    setIsRestoring(true);
+    const restoredItems: BulkDraftItem[] = persisted.items.map((item) => ({
+      ...item,
+      file: null,
+      previewUrl: "",
+      validationErrors: [],
+      duplicateWarning: null
+    }));
+    setBatchId(persisted.batchId);
+    setItems(restoredItems);
+    getIngestionBatch(adminToken, persisted.batchId)
+      .then((status) => {
+        setBatchStatus(status);
+        setItems((current) => mergeServerStatus(current, status));
+      })
+      .catch(() => onNotice("Saved intake progress could not be loaded. Check that migration 025 is applied, then refresh."))
+      .finally(() => setIsRestoring(false));
+  }, [adminToken, backendMode, onNotice]);
+
+  useEffect(() => {
+    if (batchId) saveSession(batchId, items);
+  }, [batchId, items, saveSession]);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => () => {
+    itemsRef.current.forEach((item) => {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    });
+  }, []);
+
+  const addFiles = async (fileList: FileList | File[]) => {
+    if (submitted && !items.some((item) => !item.server || item.server.upload_state !== "uploaded")) {
+      onNotice("This batch has already completed its uploads. Start a new batch before adding files.");
+      return;
+    }
+    const selected = Array.from(fileList);
+    if (selected.length === 0) return;
+    let nextItems: BulkDraftItem[];
+    if (submitted) {
+      const pending = items.filter((item) => item.server && item.server.upload_state !== "uploaded");
+      if (selected.length > pending.length) {
+        onNotice(`Select at most ${pending.length} pending file${pending.length === 1 ? "" : "s"} for this batch.`);
+      }
+      nextItems = [...items];
+      for (const [index, file] of selected.slice(0, pending.length).entries()) {
+        const target = pending[index];
+        const draft = await createBulkDraftItem(file);
+        if (draft.previewUrl && target.previewUrl) URL.revokeObjectURL(target.previewUrl);
+        const replacement: BulkDraftItem = {
+          ...draft,
+          clientItemId: target.clientItemId,
+          memeId: target.memeId,
+          title: target.title,
+          server: target.server
+        };
+        const targetIndex = nextItems.findIndex((item) => item.clientItemId === target.clientItemId);
+        if (targetIndex >= 0) nextItems[targetIndex] = replacement;
+        else URL.revokeObjectURL(draft.previewUrl);
+      }
+    } else {
+      const availableSlots = BULK_MAX_ITEMS - items.length;
+      if (selected.length > availableSlots) {
+        onNotice(`A batch can contain at most ${BULK_MAX_ITEMS} images.`);
+      }
+      nextItems = [...items];
+      for (const file of selected.slice(0, Math.max(0, availableSlots))) {
+        const draft = await createBulkDraftItem(file);
+        if (nextItems.some((item) => item.contentHash === draft.contentHash)) {
+          URL.revokeObjectURL(draft.previewUrl);
+          continue;
+        }
+        nextItems.push(draft);
+      }
+    }
+    const withWarnings = applyDuplicateWarnings(nextItems);
+    setItems(withWarnings);
+    if (withWarnings.some((item) => item.validationErrors.length > 0)) {
+      onNotice("Some files need attention before the batch can be confirmed. Video files are rejected in this release.");
+    } else if (submitted && batchId) {
+      onNotice(`${withWarnings.length} image${withWarnings.length === 1 ? "" : "s"} restored for retry. Resume the batch to continue.`);
+    } else {
+      onNotice(`${withWarnings.length} image${withWarnings.length === 1 ? "" : "s"} ready for review.`);
+    }
+  };
+
+  const updateTitle = (clientItemId: string, title: string) => {
+    setItems((current) => current.map((item) => item.clientItemId === clientItemId ? { ...item, title } : item));
+  };
+
+  const removeItem = (clientItemId: string) => {
+    if (submitted) return;
+    setItems((current) => {
+      const target = current.find((item) => item.clientItemId === clientItemId);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return applyDuplicateWarnings(current.filter((item) => item.clientItemId !== clientItemId));
+    });
+  };
+
+  const syncOne = useCallback(async (statusItem: IngestionItemStatus, currentItems: BulkDraftItem[]) => {
+    let currentStatus: IngestionBatchStatus | null = null;
+    const local = currentItems.find((item) => item.clientItemId === statusItem.idempotency_key);
+    if (statusItem.upload_state !== "uploaded") {
+      if (!local?.file) {
+        onNotice(`${local?.fileName || statusItem.original_filename} needs to be re-selected before it can be retried.`);
+        return;
+      }
+      currentStatus = await uploadIngestionItem(adminToken, statusItem.batch_id, statusItem.job_id, local.file);
+      applyStatus(currentStatus);
+      statusItem = currentStatus.items.find((item) => item.job_id === statusItem.job_id) || statusItem;
+    }
+    if (statusItem.state !== "human_ready") {
+      currentStatus = await processIngestionItem(adminToken, statusItem.job_id);
+      applyStatus(currentStatus);
+    }
+  }, [adminToken, applyStatus, onNotice]);
+
+  const processItems = async (status: IngestionBatchStatus) => {
+    const pending = status.items.filter((item) => item.state !== "human_ready");
+    await runBounded(pending, async (item) => {
+      try {
+        await syncOne(item, items);
+      } catch (error) {
+        onNotice(error instanceof Error ? error.message : `Could not process ${item.original_filename}.`);
+      }
+    });
+    const latest = await refreshBatch(status.batch.id).catch(() => null);
+    if (latest?.batch.status === "complete") {
+      onNotice(`Batch complete. ${latest.batch.ready_items} images are ready for human curation.`);
+      await onBackendChanged();
+    } else if (latest?.batch.failed_items) {
+      onNotice(`${latest.batch.failed_items} item${latest.batch.failed_items === 1 ? "" : "s"} failed. Retry only the failed items after correcting the issue.`);
+    }
+  };
+
+  const confirmBatch = async () => {
+    if (!backendMode || !adminToken.trim()) {
+      onNotice("Connect the Admin backend with an API token before confirming a durable batch.");
+      return;
+    }
+    if (!canConfirmBulk(items)) {
+      onNotice("Resolve invalid files and re-select any missing files before confirming the batch.");
+      return;
+    }
+    if (totalBytes > BULK_MAX_BATCH_BYTES) {
+      onNotice("The batch exceeds the 200 MiB total limit.");
+      return;
+    }
+    if (items.some((item) => item.duplicateWarning) && !window.confirm("Duplicate content warnings are present. Upload these items anyway?")) return;
+
+    setIsWorking(true);
+    try {
+      const idempotencyKey = `batch-${crypto.randomUUID()}`;
+      const status = await createIngestionBatch(adminToken, {
+        idempotency_key: idempotencyKey,
+        items: items.map((item) => ({
+          idempotency_key: item.clientItemId,
+          meme_id: item.memeId,
+          original_filename: item.fileName,
+          title: item.title.trim() || item.fileName,
+          content_hash: item.contentHash,
+          byte_size: item.byteSize,
+          mime_type: item.mimeType,
+          media_type: "image"
+        }))
+      });
+      setBatchId(status.batch.id);
+      applyStatus(status);
+      onNotice(`Batch ${status.batch.id} created. Uploading with ${MAX_CONCURRENCY} concurrent workers.`);
+      await processItems(status);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : "Unable to create the ingestion batch.");
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const resumeBatch = async () => {
+    if (!batchId) return;
+    setIsWorking(true);
+    try {
+      const status = await refreshBatch();
+      if (status) await processItems(status);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : "Unable to resume the ingestion batch.");
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const retryFailed = async () => {
+    if (!adminToken.trim() || failedItems.length === 0) return;
+    setIsWorking(true);
+    try {
+      const result = await retryIngestionItems(adminToken, failedItems.map((item) => item.server!.job_id));
+      const status = result.batches.find((candidate) => candidate.batch.id === batchId) || result.batches[0];
+      if (status) {
+        applyStatus(status);
+        await processItems(status);
+      }
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : "Unable to reset failed ingestion items.");
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const startNewBatch = () => {
+    items.forEach((item) => {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    });
+    setItems([]);
+    setBatchId(null);
+    setBatchStatus(null);
+    saveSession(null, []);
+    onNotice("New bulk intake batch ready.");
+  };
+
+  return (
+    <section className="bulk-ingestion-panel brutalist-border brutalist-shadow-black-lg" aria-labelledby="bulk-ingestion-heading">
+      <div className="bulk-ingestion-heading">
+        <div>
+          <p className="bulk-kicker">PHASE 4 / DURABLE INTAKE</p>
+          <h3 id="bulk-ingestion-heading">Bulk Add Memes</h3>
+          <p className="bulk-description">Review image files first. Upload creates private archived metadata, then both advisory AI evaluations must succeed before human curation can see the item.</p>
+        </div>
+        <div className="bulk-limits" aria-label="Bulk intake limits">
+          <strong>{items.length}/{BULK_MAX_ITEMS}</strong>
+          <span>{formatBytes(totalBytes)} / {formatBytes(BULK_MAX_BATCH_BYTES)}</span>
+        </div>
+      </div>
+
+      {!backendMode && (
+        <div className="bulk-blocked" role="status">Connect backend mode to create a durable batch. Local draft mode does not upload bulk files.</div>
+      )}
+
+      <div
+        className={`bulk-dropzone ${isDragging ? "is-dragging" : ""} ${submitted ? "is-locked" : ""}`}
+        onDragOver={(event) => { event.preventDefault(); if (!submitted) setIsDragging(true); }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={(event) => { event.preventDefault(); setIsDragging(false); if (!submitted) void addFiles(event.dataTransfer.files); }}
+      >
+        <span className="material-symbols-outlined" aria-hidden="true">photo_library</span>
+        <strong>{submitted ? `BATCH ${batchId}` : "DROP IMAGES HERE"}</strong>
+        <span>{submitted ? "This batch is locked; resume or retry its durable progress below." : "or choose multiple PNG, JPEG, GIF, WebP, or AVIF files"}</span>
+        {(!submitted || items.some((item) => item.server && item.server.upload_state !== "uploaded")) && <button type="button" className="brutalist-border-sm bulk-choose-button" onClick={() => inputRef.current?.click()}>{submitted ? "Re-select pending files" : "Choose images"}</button>}
+        <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple hidden onChange={(event) => { void addFiles(event.target.files || []); event.target.value = ""; }} />
+      </div>
+
+      {isRestoring && <p className="bulk-progress-note">Restoring saved server progress…</p>}
+      {invalidCount > 0 && <p className="bulk-error-summary" role="alert">{invalidCount} file{invalidCount === 1 ? "" : "s"} need attention before confirmation.</p>}
+
+      {items.length > 0 && (
+        <div className="bulk-review-table" role="region" aria-label="Bulk image review" tabIndex={0}>
+          <div className="bulk-review-header"><span>Preview / filename</span><span>Title</span><span>Size / type</span><span>Stable ID / state</span><span>Action</span></div>
+          {items.map((item) => (
+            <article className="bulk-review-row" key={item.clientItemId}>
+              <div className="bulk-file-cell">
+                {item.previewUrl ? <img src={item.previewUrl} alt="" /> : <div className="bulk-no-preview" aria-hidden="true">IMG</div>}
+                <div><strong title={item.fileName}>{item.fileName}</strong><small>{item.contentHash.slice(0, 16)}…</small></div>
+              </div>
+              <label className="bulk-title-cell"><span className="sr-only">Title for {item.fileName}</span><input className="brutalist-input" value={item.title} disabled={submitted} onChange={(event) => updateTitle(item.clientItemId, event.target.value)} /></label>
+              <div className="bulk-meta-cell"><strong>{formatBytes(item.byteSize)}</strong><span>{item.mimeType || "unknown"}</span>{item.validationErrors.map((error) => <em key={error}>{error}</em>)}</div>
+              <div className="bulk-state-cell"><code>{item.memeId}</code><span className={`bulk-state ${statusClass(item)}`}>{statusForItem(item)}</span>{item.duplicateWarning && <em className="bulk-warning">⚠ {item.duplicateWarning}</em>}{item.server?.error_message && <em className="bulk-error">{item.server.error_message}</em>}<div className="bulk-ai-states">{(item.server?.evaluations || []).map((evaluation) => <span key={evaluation.judge_key}>{evaluation.judge_key.toUpperCase()}: {evaluation.state}</span>)}</div></div>
+              <div className="bulk-item-actions">{!submitted && <button type="button" className="brutalist-border-sm bulk-remove-button" onClick={() => removeItem(item.clientItemId)}>Remove</button>}</div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      <div className="bulk-actions">
+        {!submitted ? <button type="button" className="btn-primary brutalist-border brutalist-shadow-black brutalist-interactive" disabled={isWorking || !canConfirmBulk(items) || totalBytes > BULK_MAX_BATCH_BYTES || !backendMode} onClick={() => void confirmBatch()}>{isWorking ? "Uploading…" : "Confirm & Upload Batch"}</button> : <><button type="button" className="brutalist-border-sm bulk-secondary-button" disabled={isWorking} onClick={() => void resumeBatch()}>{isWorking ? "Processing…" : "Resume pending items"}</button>{failedItems.length > 0 && <button type="button" className="brutalist-border-sm bulk-retry-button" disabled={isWorking} onClick={() => void retryFailed()}>Retry failed ({failedItems.length})</button>}<button type="button" className="brutalist-border-sm bulk-secondary-button" disabled={isWorking} onClick={startNewBatch}>Start new batch</button></>}
+      </div>
+
+      {batchStatus && <div className="bulk-batch-footer"><strong>Batch status: {batchStatus.batch.status.toUpperCase()}</strong><span>{readyCount}/{batchStatus.batch.total_items} human-ready</span><span>{batchStatus.batch.failed_items} failed</span><span>Refresh-safe server progress is stored in D1. Failed local uploads need the file selected again.</span></div>}
+      <p className="bulk-footnote">Images only · max {formatBytes(BULK_MAX_FILE_BYTES)} per file · no upload publishes content or creates a human vote.</p>
+    </section>
+  );
+}

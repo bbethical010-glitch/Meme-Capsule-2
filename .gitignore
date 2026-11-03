@@ -11,3 +11,5 @@ dist/
 .knowledge/.env
 .knowledge/*.local
 *-firebase-adminsdk-*.json
+*.zip
+0.26.0

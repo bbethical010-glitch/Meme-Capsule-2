@@ -39,10 +39,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     // 2. Delete from R2
-    if (env.R2_BUCKET && storagePaths.length > 0) {
+    const bucket = env.MEMES_BUCKET || (env as any).R2_BUCKET;
+    if (bucket && storagePaths.length > 0) {
       for (const key of storagePaths) {
         try {
-          await env.R2_BUCKET.delete(key);
+          await bucket.delete(key);
         } catch (e) {
           console.error("Failed to delete from R2:", key, e);
         }

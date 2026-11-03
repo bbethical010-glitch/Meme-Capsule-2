@@ -9,6 +9,7 @@ import type { PagesFunction } from "../../_shared/pages";
 import { json, handleD1Error, type Env } from "../../_shared/d1r2";
 import { validateSession } from "../../_shared/catAuth";
 import { ensureCurationTables } from "../../_shared/curateDb";
+import { getIngestionJobState } from "../../_shared/ingestion";
 
 interface SavePayload {
   meme_id?: string;
@@ -55,6 +56,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     if (!corpusStatus || !["keep", "excluded", "duplicate", "review_later"].includes(corpusStatus)) {
       return json({ error: "corpus_status must be 'keep', 'excluded', 'duplicate', or 'review_later'." }, { status: 400 });
+    }
+
+    const ingestionState = await getIngestionJobState(env.DB, memeId);
+    if (ingestionState && ingestionState !== "human_ready") {
+      return json({
+        error: "This new intake item is not human-ready yet. Both advisory evaluations must succeed before a human vote is accepted.",
+        ingestion_state: ingestionState
+      }, { status: 409 });
     }
 
     // Guard: if meme has been force-removed, return 410

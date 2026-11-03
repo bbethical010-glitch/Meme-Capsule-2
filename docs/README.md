@@ -67,10 +67,14 @@ Meme Capsule operates across three decoupled codebases:
 - **Admin Dashboard (`/admin`)**:
   - Cloudflare D1 database management and R2 storage sync.
   - Raw SQL query runner with safe execution guards.
-  - Event telemetry recalculation engine and CSV/Excel exports.
+  - Reorganized Collection, Curation, and Operations navigation with responsive keyboard-accessible sidebar controls.
+  - Meme Vault and Add Memes workspace with local/backend collection editing and CSV/Excel-style JSON exports.
+  - Durable bulk image intake with drag/drop review, stable content IDs, duplicate warnings, server-side image validation, bounded uploads, resumable D1 progress, and retry-only-failed processing.
+  - Human Curation, AI Judge Workflow, and Reports / Moderation links to their existing protected workbenches.
   - Push Notifications control room with FCM composer, live Android preview, device stats, target selection, confirmation, and dispatch logs.
   - Scheduled Drops panel with reusable message templates and recurring timezone-aware delivery schedules.
   - Permanent JSON/CSV/TXT content-library upload with random message selection and per-schedule delete controls. Catalog TXT files may use section headings, numbered entries, and two lines per entry.
+- The retired Admin Analytics and legacy Admin AI Categorisation views are no longer mounted in `/admin`. Their backend endpoints remain available for retained workers, external producers, or compatibility until separately deprecated.
 - **Moderation Dashboard (`/reports`)**:
   - Token-protected review interface for user-reported content.
   - One-click meme archiving and addition to `content_blacklist`.
@@ -78,7 +82,7 @@ Meme Capsule operates across three decoupled codebases:
   - `GET /api/random-meme` & `GET /api/daily-meme` (dual-source delivery with fallback).
   - `POST /api/events` (telemetry queue flusher).
   - `POST /api/report` (user safety reporting).
-  - Admin analytics endpoints (`/api/admin/analytics/*`).
+  - Retained legacy Admin analytics endpoints (`/api/admin/analytics/*`) without an Admin UI tab.
   - `POST /api/admin/notifications/send` and `GET /api/admin/notifications/stats` (protected FCM HTTP v1 dispatch and device metrics).
 
 ## Admin Dashboard
@@ -122,6 +126,11 @@ Admin backend routes:
 - `PATCH /api/admin/memes` - update meme metadata, including safe ID edits
 - `DELETE /api/admin/memes` - archive a meme by setting `status = archived` and `is_active = 0`
 - `POST /api/admin/upload` - upload image/video files to R2
+- `POST /api/admin/ingestion/batches` - create or resume an idempotent bulk image batch
+- `GET /api/admin/ingestion/batches?id=...` - read durable batch, upload, and AI states
+- `POST /api/admin/ingestion/upload` - validate and upload one private intake image
+- `POST /api/admin/ingestion/process` - run bounded Judge 4/5 advisory processing for one item
+- `POST /api/admin/ingestion/retry` - reset selected failed intake jobs
 - `POST /api/admin/notifications/send` - dispatch an FCM notification to active devices, a topic, or a single token
 - `GET /api/admin/notifications/stats` - return registered-device totals and app/platform breakdowns
 - `GET /api/catalog` - return the active curated meme index for client-side shuffled deck delivery
