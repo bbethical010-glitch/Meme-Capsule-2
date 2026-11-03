@@ -129,6 +129,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
 - **Production rollout plan**: The remaining work is tracked phase-by-phase in [ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md](./ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md), covering Android instrumentation, delivery reliability, ingestion hardening, lifecycle controls, dashboard completion, scale testing, and staged release gates.
 - **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, dark mode, and manual refresh controls.
 - **Random meme repetition controls**: `/api/random-meme` accepts up to 50 excluded meme IDs, samples from up to five candidates near a random key with wrap-around candidates, falls back safely when every eligible meme is excluded, and explicitly disables response caching. `POST /api/admin/rebalance-random-keys` redistributes active meme keys for maintenance.
+- **Deterministic shuffled deck catalog**: `GET /api/catalog` returns every active, curated `keep` meme's lightweight index fields, resolves missing image URLs from R2 storage paths, and uses a five-minute public cache for client-side deck shuffling.
 - **`/categorise`**: Multi-topic taxonomy tagging, tone labeling, and humor mechanism tagging.
 - **`/ai-judge`**: Multimodal AI pre-curator loop powered by NVIDIA NIM Llama 3.2 Vision and universal vision models.
 - **`/reports`**: Token-gated content safety moderation desk.

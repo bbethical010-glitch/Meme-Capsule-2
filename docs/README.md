@@ -124,6 +124,7 @@ Admin backend routes:
 - `POST /api/admin/upload` - upload image/video files to R2
 - `POST /api/admin/notifications/send` - dispatch an FCM notification to active devices, a topic, or a single token
 - `GET /api/admin/notifications/stats` - return registered-device totals and app/platform breakdowns
+- `GET /api/catalog` - return the active curated meme index for client-side shuffled deck delivery
 - `GET/POST /api/admin/notifications/messages` - list and create reusable notification messages
 - `GET/POST/PATCH /api/admin/notifications/schedules` - list, create, enable, and disable recurring schedules and delivery history
 - `GET/POST /api/admin/notifications/content-files` - list and permanently store validated JSON/CSV/TXT message libraries. JSON uploads may be a flat array of `{ "title": "...", "body": "..." }` entries, an `{ "entries": [...] }` wrapper, or the sectioned catalog shape with `sections[].entries[]`; UTF-8 BOMs are accepted.
