@@ -23,6 +23,7 @@ The public end-user mobile experience (Android APK `com.meme.capsule` and promot
   2. **Promotional & Press Web Platform**: Multi-page statically prerendered web platform at `https://memecapsule.wtf/` with live preview simulator, 3D device mockups, and Press Kit.
   3. **Developer / Internal Backend (This Repo)**: Multi-judge consensus curation (`/curate`), D1/R2 administrative management (`/admin`), token-gated user safety moderation (`/reports`), and AI-assisted pre-curation loop (`/ai-judge`).
 - **Data Fallbacks:** Dual-source meme delivery (Cloudflare D1 repository + Reddit gateway), with static offline fallbacks (`src/data/fallbackMemes.ts`).
+- **Admin Console Phase 3:** `/admin` now uses grouped Collection, Curation, and Operations navigation with accessible collapsible desktop and mobile drawer behavior. The retired Admin Analytics and legacy Admin AI Categorisation React views are removed; retained backend contracts and Android/notification systems remain independent.
 
 ## Building and Running
 

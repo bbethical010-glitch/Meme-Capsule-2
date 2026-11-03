@@ -4,9 +4,9 @@ status: production
 current_phase: Production Operations, Multi-Judge Consensus & Scaling
 architecture: Cloudflare Pages + Functions + D1 (SQLite) + R2 Media CDN
 deployed_url: https://meme-capsule-eww.pages.dev
-mobile_companion_app: com.meme.capsule (v3.3 / versionCode 24) on Google Play
+mobile_companion_app: com.meme.capsule (v3.8 / versionCode 29; v3.7 / versionCode 28 on Google Play)
 web_companion_platform: https://memecapsule.wtf
-updated: 2026-10-13
+updated: 2026-11-02
 ---
 
 # Project State: Meme Capsule (Serverless Edge Backend & Curation Engine)
@@ -59,7 +59,7 @@ The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been perma
   - `/api/admin/sync-r2`: Two-way reconciliation scanning R2 bucket objects into D1 rows.
   - `/api/admin/sql`: Token-protected raw SQL console execution engine with safety guards.
   - `/api/admin/memes/hard-delete`: Destructive cleanup endpoint for removing invalid records.
-  - `/api/admin/analytics/*`: Ranking recalculation, trend analysis, overview metrics, and algorithm reset challenges.
+  - `/api/admin/analytics/*`: Retained legacy ranking, trend, overview, and reset endpoints; the former Admin Analytics React tab was retired in Phase 3.
 - **Curation & Consensus APIs (`functions/api/curate/`)**:
   - `/api/curate/list`, `/api/curate/next`, `/api/curate/save`, `/api/curate/stats`: Multi-judge voting operations.
   - `/api/curate/approve`: Atomic single-judge adoption and authoritative finalization (writes to `meme_curation_final` and `memes`).
@@ -113,7 +113,7 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
     - **Compact AI Preview Strip**: Displays consensus verdicts and directional hints above the meme stage.
     - **Role-Based AI Console Gating**: Continuous AI Judge Console is hidden from human judges (1–3) on all viewports, visible to judge4/5 operators on desktop only.
     - **Quick Action Bar & Gesture Footer**: Complete touch alternatives for non-gesture accessibility; 3-column layout featuring `[✏️ MANUAL OVERRIDE]`, `[🔞 TAG NSFW]` (toggling client-gated 18+ tag matching desktop logic with real-time neon active state), and `[🗑️ FORCE REMOVE]`.
-- **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, manual `[🔄 REFRESH (Ctrl+R)]` control, and dark mode.
+- **`/admin`**: Administration console with grouped Collection/Curation/Operations navigation, D1 SQL console, R2 media sync, 5-metric status bar, local/backend meme editing, manual `[🔄 REFRESH (Ctrl+R)]` control, and dark mode. The legacy Admin Analytics and Admin AI Categorisation views are retired; their uncertain/external backend routes remain preserved.
 - **Analytics route**: The Super Admin CTA opens `#/curate/analytics`, where the KPI cards and engagement trend read live consented Android analytics through curator-session-protected APIs. Secondary design panels remain preview-only until their backend contracts are implemented.
 - **Live Android analytics path**: Migration 015 adds `android_analytics_events`; `POST /api/analytics/events` accepts authenticated, consented Android batches, and curator-session-protected `/api/analytics/overview` plus `/api/analytics/trends` provide low-latency KPI reads. The analytics route refreshes these values every 30 seconds. Configure `ANALYTICS_APP_TOKEN` before enabling ingestion.
 - **Phase 1 contract freeze**: Migration 016 adds required `schema_version = 1` validation to Android event ingestion. The Android client must include this field on every event before production telemetry is enabled.
@@ -127,8 +127,8 @@ The database `meme-capsule-db` (SQLite at the edge) operates under additive migr
 - **Phase 4 deletion lifecycle**: Migration 018 adds `android_analytics_deletion_audit`; superadmins can process verified anonymous-hash deletion requests through `POST /api/analytics/deletion`, with audit listing through the protected `GET` route.
 - **Phase 4 consent lineage**: Migration 019 stores `consent_version` with each Android event, defaulting legacy clients to `v1`. Consent denial/revocation remains local and must not emit behavioral telemetry.
 - **Production rollout plan**: The remaining work is tracked phase-by-phase in [ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md](./ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md), covering Android instrumentation, delivery reliability, ingestion hardening, lifecycle controls, dashboard completion, scale testing, and staged release gates.
-- **`/admin`**: Administration console with D1 SQL console, R2 media sync, 5-metric status bar, CSV/Excel export, analytics algorithm tuning, dark mode, and manual refresh controls.
-- **Random meme repetition controls**: `/api/random-meme` accepts up to 50 excluded meme IDs, samples from up to five candidates near a random key with wrap-around candidates, falls back safely when every eligible meme is excluded, and explicitly disables response caching. `POST /api/admin/rebalance-random-keys` redistributes active meme keys for maintenance.
+ - **`/admin`**: Administration console with grouped navigation, D1 SQL console, R2 media sync, 5-metric status bar, meme collection editing, dark mode, and manual refresh controls. Android telemetry, notification delivery, scheduled workers, and retained backend analytics contracts remain outside the retired UI.
+ - **Random meme repetition controls**: `/api/random-meme` accepts up to 50 excluded meme IDs, samples from up to five candidates near a random key with wrap-around candidates, falls back safely when every eligible meme is excluded, and explicitly disables response caching. `POST /api/admin/rebalance-random-keys` redistributes active meme keys for maintenance.
 - **`/categorise`**: Multi-topic taxonomy tagging, tone labeling, and humor mechanism tagging.
 - **`/ai-judge`**: Multimodal AI pre-curator loop powered by NVIDIA NIM Llama 3.2 Vision and universal vision models.
 - **`/reports`**: Token-gated content safety moderation desk.
@@ -192,8 +192,6 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
    - Heavy table scans are now completely bypassed when `include_stats=false`.
 2. **Client-Side Optimistic Progress Incrementation**:
    - [`src/curate/CurateApp.tsx`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/CurateApp.tsx) and [`src/curate/curateApi.ts`](file:///c:/Users/avspn/Desktop/projects/meme%20application/src/curate/curateApi.ts) updated to fetch next memes with `include_stats=false` during continuous swiping.
-<<<<<<< HEAD
-
 ---
 
 ## 8. High-Performance Instant Curation Engine & Zero-Scan Edge Architecture (October 2026)
@@ -221,7 +219,5 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
    - Upgraded `.curate-mobile-quick-actions` to a 2-column grid (`grid-template-columns: repeat(2, 1fr)`) with enlarged 54px touch targets for `[✏️ MANUAL OVERRIDE]` and `[🗑️ FORCE REMOVE]`.
 
 
-=======
    - The UI optimistically advances the judge's reviewed counter (`reviewed + 1`, `remaining - 1`), eliminating wait times and dropping per-swipe D1 reads from **~10,000 to ~2 rows (99.97% drop)**.
    - Increases daily curation capacity from **166 memes/day to over 25,000 memes/day** under Cloudflare's Free tier with 0 cost.
->>>>>>> f06b107 (feat: complete Android analytics rollout phases)

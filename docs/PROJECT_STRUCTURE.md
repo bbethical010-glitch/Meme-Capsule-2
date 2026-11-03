@@ -1213,6 +1213,10 @@ meme application/
 │   ├── fetch-knowledge.sh
 │   ├── update-knowledge.ps1
 │   └── update-knowledge.sh
+├── .nexus
+├── .vscode
+│   ├── launch.json
+│   └── settings.json
 ├── .windsurf
 │   └── skills
 │       └── brag
@@ -1536,7 +1540,6 @@ meme application/
 │   │   │   ├── frame-03-at-15.038s.png
 │   │   │   └── frame-04-at-19.449s.png
 │   │   └── index.html                                # HTML entry point
-│   ├── .DS_Store
 │   ├── brag-plan.md
 │   ├── brag.mp4
 │   └── composition-brief.md
@@ -1561,9 +1564,14 @@ meme application/
 │   │   ├── 015_android_analytics_events.sql
 │   │   ├── 016_android_analytics_schema_version.sql
 │   │   ├── 017_android_analytics_query_indexes.sql
-│   │   └── 018_android_analytics_deletion_audit.sql
-│   │   └── 016_android_analytics_schema_version.sql
-│   ├── .DS_Store
+│   │   ├── 018_android_analytics_deletion_audit.sql
+│   │   ├── 019_android_analytics_consent_version.sql
+│   │   ├── 020_android_analytics_daily_summary.sql
+│   │   ├── 021_android_live_analytics.sql
+│   │   ├── 021_create_device_tokens.sql
+│   │   ├── 022_rename_device_tokens_to_notification_tokens.sql
+│   │   ├── 023_scheduled_notifications.sql
+│   │   └── 024_notification_content_files.sql
 │   ├── schema.sql                                    # SQLite schema for meme metadata
 │   └── seed.sql
 ├── docs                                              # Dedicated project documentation folder
@@ -1571,14 +1579,19 @@ meme application/
 │   │   ├── AI-SPEC.md
 │   │   ├── Multi-Judge Majority Consensus — curate Implementation Prompt.md
 │   │   └── ROADMAP.md                                # Phase-by-phase development plan
-│   ├── .DS_Store
+│   ├── superpowers
+│   │   └── plans
+│   ├── ADMIN_OVERHAUL_AUDIT.md
 │   ├── AGENT_RULES.md
 │   ├── AGENTS.md
-│   ├── AI_AGENT_SINGLE_SOURCE_OF_TRUTH.md
 │   ├── AI_PREJUDGE_CURATE_ANALYSIS.md
 │   ├── ANALYTICS_API_SPEC.md
 │   ├── ANALYTICS_DASHBOARD_PRODUCTION_PLAN.md
+│   ├── ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md
+│   ├── ANALYTICS_STAGING_VERIFICATION.md
 │   ├── ANDROID_ANALYTICS_DATA_COLLECTION_STANDARD.md
+│   ├── ANDROID_ANALYTICS_IMPLEMENTATION_HISTORY.md
+│   ├── ANDROID_ANALYTICS_RELEASE_CANDIDATE_TEST_PLAN.md
 │   ├── CAPACITY_ANALYSIS.md
 │   ├── CHANGELOG.md                                  # Version history
 │   ├── CLAUDE.md                                     # Development setup & commands guide
@@ -1610,7 +1623,9 @@ meme application/
 │   │   ├── curationConsensus.ts
 │   │   ├── d1r2.ts                                   # D1 + R2 helper (NEW — replaces supabase.ts)
 │   │   ├── fallbackMemes.ts                          # Static fallback memes for offline/empty DB
+│   │   ├── fcmAuth.ts
 │   │   ├── forceRemove.ts
+│   │   ├── liveAnalytics.ts
 │   │   └── pages.ts                                  # Cloudflare Pages type definitions
 │   ├── api                                           # API route handlers
 │   │   ├── admin                                     # Admin dashboard
@@ -1627,10 +1642,17 @@ meme application/
 │   │   │   │   └── trends.ts
 │   │   │   ├── memes
 │   │   │   │   └── hard-delete.ts
+│   │   │   ├── notifications
+│   │   │   │   ├── content-files.ts
+│   │   │   │   ├── messages.ts
+│   │   │   │   ├── schedules.ts
+│   │   │   │   ├── send.ts
+│   │   │   │   └── stats.ts
 │   │   │   ├── ai-categorise.ts
 │   │   │   ├── ai-comparison.ts
 │   │   │   ├── ai-stats.ts
 │   │   │   ├── memes.ts                              # GET/POST/PATCH/DELETE /api/admin/memes
+│   │   │   ├── send-push.ts
 │   │   │   ├── sql.ts
 │   │   │   ├── sync-r2.ts                            # POST /api/admin/sync-r2 (R2→D1 sync)
 │   │   │   └── upload.ts                             # POST /api/admin/upload
@@ -1646,9 +1668,17 @@ meme application/
 │   │   │   ├── next-meme.ts
 │   │   │   └── runs.ts
 │   │   ├── analytics
+│   │   │   ├── live
+│   │   │   │   ├── _shared.ts
+│   │   │   │   ├── feed.ts
+│   │   │   │   ├── health.ts
+│   │   │   │   ├── insights.ts
+│   │   │   │   ├── rebuild.ts
+│   │   │   │   └── summary.ts
 │   │   │   ├── ai-insights.ts
 │   │   │   ├── audience.ts
 │   │   │   ├── content.ts
+│   │   │   ├── deletion.ts
 │   │   │   ├── events.ts
 │   │   │   ├── funnel.ts
 │   │   │   ├── overview.ts
@@ -1691,6 +1721,9 @@ meme application/
 │   │   │   └── stats.ts
 │   │   ├── memes
 │   │   │   └── random.ts
+│   │   ├── notifications
+│   │   │   ├── _fcm.ts
+│   │   │   └── register.ts
 │   │   ├── contact.ts
 │   │   ├── daily-meme.ts                             # GET /api/daily-meme — public
 │   │   ├── events.ts
@@ -1708,25 +1741,13 @@ meme application/
 │   └── sw.js                                         # Service worker for offline support
 ├── src                                               # Frontend source code
 │   ├── admin                                         # Admin dashboard
-│   │   ├── ai
-│   │   │   ├── aiApi.ts
-│   │   │   ├── AiComparison.tsx
-│   │   │   ├── AiOverrideDrawer.tsx
-│   │   │   ├── AiOverview.tsx
-│   │   │   ├── AiTab.tsx
-│   │   │   └── categories.ts
-│   │   ├── analytics-dashboard
-│   │   │   ├── AnalyticsDashboard.tsx
-│   │   │   ├── InsightsList.tsx
-│   │   │   ├── MemeDetail.tsx
-│   │   │   ├── Overview.tsx
-│   │   │   ├── Rankings.tsx
-│   │   │   └── TrendChart.tsx
 │   │   ├── sql-runner
 │   │   │   └── SqlRunner.tsx
 │   │   ├── admin.css                                 # Admin-specific styles
 │   │   ├── AdminApp.tsx                              # Admin UI component
-│   │   └── AdminGate.tsx
+│   │   ├── AdminGate.tsx
+│   │   ├── PushNotifications.tsx
+│   │   └── ScheduledNotifications.tsx
 │   ├── ai-judge
 │   │   ├── aiJudge.css
 │   │   ├── aiJudgeApi.ts
@@ -1779,7 +1800,9 @@ meme application/
 │   │   ├── CurateLogin.tsx
 │   │   ├── curateTypes.ts
 │   │   ├── CurationStatsModal.tsx
-│   │   └── EditorialButtons.tsx
+│   │   ├── EditorialButtons.tsx
+│   │   ├── useCurateGestures.ts
+│   │   └── useIsMobile.ts
 │   ├── data                                          # Static data
 │   │   └── fallbackMemes.ts                          # Static fallback memes for offline/empty DB
 │   ├── lib                                           # Utility modules
@@ -1792,17 +1815,28 @@ meme application/
 │   ├── types.ts                                      # TypeScript type definitions (Meme, Rarity, etc.)
 │   └── vite-env.d.ts                                 # Vite environment type augmentation
 ├── tests
+│   ├── analytics.test.ts
 │   └── curationConsensus.test.mjs
 ├── workers
-│   └── analyticsAggregator.ts
+│   ├── analyticsAggregator.ts
+│   ├── notificationScheduler.ts
+│   ├── wrangler.analytics.toml
+│   └── wrangler.notifications.toml
+├── .dev.vars
 ├── .dev.vars.example                                 # Environment variable template
-├── .DS_Store
+├── .env
 ├── .gitignore                                        # Git ignore rules
+├── 0.26.0
 ├── AGENT_RULES.md
 ├── AGENTS.md
+├── ANALYTICS_LIVE.md
+├── ANDROID_REQUEST.md
+├── backend_snapshot.zip
 ├── FORCE_REMOVE_IMPLEMENTATION.md
 ├── FORCE_REMOVE_TODO.md
 ├── index.html                                        # HTML entry point
+├── LIVE_TODO.md
+├── meme_capsule_general_push_notifications.json
 ├── package-lock.json                                 # Locked dependency tree
 ├── package.json                                      # Dependencies and scripts
 ├── skills-lock.json

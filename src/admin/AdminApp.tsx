@@ -1,15 +1,7 @@
 import {
-  Database,
-  Download,
-  Edit3,
-  ExternalLink,
-  ImagePlus,
-  Link as LinkIcon,
-  ListChecks,
-  RefreshCw,
-  Save,
-  Trash2,
-  UploadCloud
+  Menu,
+  Pin,
+  PinOff
 } from "lucide-react";
 import React, { ChangeEvent, FormEvent, useMemo, useState, useEffect, useCallback } from "react";
 import {
@@ -31,9 +23,7 @@ import {
   writeAdminCollection
 } from "../lib/adminCollection";
 import type { MemeInputMethod, MemeStatus, Rarity } from "../types";
-import AnalyticsDashboard from "./analytics-dashboard/AnalyticsDashboard";
 import SqlRunner from "./sql-runner/SqlRunner";
-import AiTab from "./ai/AiTab";
 import PushNotifications from "./PushNotifications";
 import ScheduledNotifications from "./ScheduledNotifications";
 import "./admin.css";
@@ -166,7 +156,9 @@ export default function AdminApp() {
   const [backendConfig, setBackendConfig] = useState<{ hasR2PublicUrl?: boolean; hasDatabase?: boolean }>({});
   const [backendActiveCount, setBackendActiveCount] = useState<number | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [activeTab, setActiveTab] = useState<"vault" | "analytics" | "sql" | "ai" | "notifications">("vault");
+  const [activeTab, setActiveTab] = useState<"vault" | "add" | "sql" | "notifications">("vault");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   // Filtering & Pagination
   const [searchTerm, setSearchTerm] = useState("");
@@ -482,6 +474,8 @@ export default function AdminApp() {
   const editMeme = useCallback((meme: AdminMeme) => {
     setEditingOriginalId(meme.id);
     setForm(toFormState(meme));
+    setActiveTab("add");
+    setIsMobileNavOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -571,11 +565,39 @@ export default function AdminApp() {
     URL.revokeObjectURL(url);
   };
 
+  const selectAdminView = (view: "vault" | "add" | "sql" | "notifications") => {
+    setActiveTab(view);
+    setIsMobileNavOpen(false);
+    if (view === "add") {
+      resetForm();
+    }
+  };
+
+  const openWorkspaceRoute = (path: string) => {
+    setIsMobileNavOpen(false);
+    window.location.assign(path);
+  };
+
   return (
     <main className="admin-shell">
       <header className="top-app-bar">
         <div className="title-area">
-          <span className="material-symbols-outlined">menu</span>
+          <button
+            type="button"
+            className="admin-menu-button brutalist-border-sm brutalist-interactive"
+            aria-label={isMobileNavOpen ? "Close admin navigation" : "Open admin navigation"}
+            aria-expanded={isMobileNavOpen}
+            aria-controls="admin-navigation"
+            onClick={() => {
+              if (window.matchMedia("(max-width: 1024px)").matches) {
+                setIsMobileNavOpen((open) => !open);
+              } else {
+                setIsSidebarCollapsed((collapsed) => !collapsed);
+              }
+            }}
+          >
+            <Menu size={20} aria-hidden="true" />
+          </button>
           <span className="title-text">MEME CAPSULE ADMIN</span>
         </div>
         <div className="header-actions">
@@ -639,51 +661,115 @@ export default function AdminApp() {
       </header>
 
       <div className="main-layout">
-        <nav className="nav-drawer">
-          <h2>ADMIN CONSOLE</h2>
-          <ul>
-            <li className={activeTab === "vault" ? "active" : ""} onClick={() => setActiveTab("vault")}>
-              <span className="material-symbols-outlined">dashboard</span>
-              Meme Vault
-            </li>
-            <li className={activeTab === "analytics" ? "active" : ""} onClick={() => setActiveTab("analytics")}>
-              <span className="material-symbols-outlined">query_stats</span>
-              Analytics
-            </li>
-            <li className={activeTab === "sql" ? "active" : ""} onClick={() => setActiveTab("sql")}>
-              <span className="material-symbols-outlined">terminal</span>
-              SQL Playground
-            </li>
-            <li className={activeTab === "ai" ? "active" : ""} onClick={() => setActiveTab("ai")}>
-              <span className="material-symbols-outlined">psychology</span>
-              AI Categorisation
-            </li>
-            <li className={activeTab === "notifications" ? "active" : ""} onClick={() => setActiveTab("notifications")}>
-              <span className="material-symbols-outlined">notifications</span>
-              Push Notifications
-            </li>
-            <li onClick={useLocalMode}>
-              <span className="material-symbols-outlined">inventory_2</span>
-              Use Local Drafts
-            </li>
-            <li
-              onClick={backendMode && !isSyncing ? handleSyncR2 : undefined}
-              style={{
-                opacity: backendMode ? 1 : 0.5,
-                cursor: backendMode && !isSyncing ? "pointer" : "not-allowed"
-              }}
+        {isMobileNavOpen && (
+          <button
+            type="button"
+            className="admin-nav-backdrop"
+            aria-label="Close admin navigation"
+            onClick={() => setIsMobileNavOpen(false)}
+          />
+        )}
+        <nav id="admin-navigation" className={`nav-drawer ${isSidebarCollapsed ? "is-collapsed" : ""} ${isMobileNavOpen ? "mobile-open" : ""}`} aria-label="Admin console navigation">
+          <div className="nav-drawer-heading">
+            <h2>ADMIN CONSOLE</h2>
+            <button
+              type="button"
+              className="nav-pin-button brutalist-border-sm brutalist-interactive"
+              aria-label={isSidebarCollapsed ? "Expand admin navigation" : "Collapse admin navigation"}
+              aria-expanded={!isSidebarCollapsed}
+              title={isSidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+              onClick={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
             >
-              <span
-                className="material-symbols-outlined"
-                style={{
-                  animation: isSyncing && syncActionName.includes("R2") ? "spin 1s linear infinite" : "none"
-                }}
-              >
-                refresh
-              </span>
-              {isSyncing && syncActionName.includes("R2") ? "Syncing R2..." : "Sync R2 Files"}
-            </li>
-          </ul>
+              {isSidebarCollapsed ? <Pin size={16} aria-hidden="true" /> : <PinOff size={16} aria-hidden="true" />}
+            </button>
+          </div>
+          <div className="nav-groups">
+            <section className="nav-group" aria-labelledby="collection-nav-heading">
+              <h3 id="collection-nav-heading" className="nav-group-title">Collection</h3>
+              <ul>
+                <li>
+                  <button type="button" className={activeTab === "vault" ? "active" : ""} onClick={() => selectAdminView("vault")} title="Meme Vault" aria-label="Meme Vault" aria-current={activeTab === "vault" ? "page" : undefined}>
+                    <span className="material-symbols-outlined" aria-hidden="true">dashboard</span>
+                    <span className="nav-label">Meme Vault</span>
+                  </button>
+                </li>
+                <li>
+                  <button type="button" className={activeTab === "add" ? "active" : ""} onClick={() => selectAdminView("add")} title="Add Memes" aria-label="Add Memes" aria-current={activeTab === "add" ? "page" : undefined}>
+                    <span className="material-symbols-outlined" aria-hidden="true">add_photo_alternate</span>
+                    <span className="nav-label">Add Memes</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+
+            <section className="nav-group" aria-labelledby="curation-nav-heading">
+              <h3 id="curation-nav-heading" className="nav-group-title">Curation</h3>
+              <ul>
+                <li>
+                  <button type="button" onClick={() => openWorkspaceRoute("/curate")} title="Human Curation" aria-label="Human Curation">
+                    <span className="material-symbols-outlined" aria-hidden="true">how_to_vote</span>
+                    <span className="nav-label">Human Curation</span>
+                  </button>
+                </li>
+                <li>
+                  <button type="button" onClick={() => openWorkspaceRoute("/ai-judge")} title="AI Judge Workflow" aria-label="AI Judge Workflow">
+                    <span className="material-symbols-outlined" aria-hidden="true">psychology</span>
+                    <span className="nav-label">AI Judge Workflow</span>
+                  </button>
+                </li>
+                <li>
+                  <button type="button" onClick={() => openWorkspaceRoute("/reports")} title="Reports and Moderation" aria-label="Reports and Moderation">
+                    <span className="material-symbols-outlined" aria-hidden="true">flag</span>
+                    <span className="nav-label">Reports / Moderation</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+
+            <section className="nav-group" aria-labelledby="operations-nav-heading">
+              <h3 id="operations-nav-heading" className="nav-group-title">Operations</h3>
+              <ul>
+                <li>
+                  <button type="button" className={activeTab === "notifications" ? "active" : ""} onClick={() => selectAdminView("notifications")} title="Push Notifications" aria-label="Push Notifications" aria-current={activeTab === "notifications" ? "page" : undefined}>
+                    <span className="material-symbols-outlined" aria-hidden="true">notifications</span>
+                    <span className="nav-label">Push Notifications</span>
+                  </button>
+                </li>
+                <li>
+                  <button type="button" className={activeTab === "sql" ? "active" : ""} onClick={() => selectAdminView("sql")} title="SQL Playground" aria-label="SQL Playground" aria-current={activeTab === "sql" ? "page" : undefined}>
+                    <span className="material-symbols-outlined" aria-hidden="true">terminal</span>
+                    <span className="nav-label">SQL Playground</span>
+                  </button>
+                </li>
+                <li>
+                  <button type="button" onClick={useLocalMode} title="Use Local Drafts" aria-label="Use Local Drafts">
+                    <span className="material-symbols-outlined" aria-hidden="true">inventory_2</span>
+                    <span className="nav-label">Use Local Drafts</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={backendMode && !isSyncing ? handleSyncR2 : undefined}
+                    disabled={!backendMode || isSyncing}
+                    title="Sync R2 Files"
+                    aria-label="Sync R2 Files"
+                  >
+                    <span
+                      className="material-symbols-outlined"
+                      aria-hidden="true"
+                      style={{
+                        animation: isSyncing && syncActionName.includes("R2") ? "spin 1s linear infinite" : "none"
+                      }}
+                    >
+                      refresh
+                    </span>
+                    <span className="nav-label">{isSyncing && syncActionName.includes("R2") ? "Syncing R2..." : "Sync R2 Files"}</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+          </div>
           <div className="sys-status">
             <p>SYSTEM UPTIME: 99.9%</p>
             <p>VERSION: 2.4.2-FAST</p>
@@ -741,26 +827,12 @@ export default function AdminApp() {
             </div>
           )}
 
-          {activeTab === "analytics" ? (
-            <div
-              style={{ background: "var(--background)", flex: 1, minHeight: "600px" }}
-              className="brutalist-border brutalist-shadow-black"
-            >
-              <AnalyticsDashboard adminToken={adminToken} />
-            </div>
-          ) : activeTab === "sql" ? (
+          {activeTab === "sql" ? (
             <div
               style={{ background: "var(--background)", flex: 1, minHeight: "600px" }}
               className="brutalist-border brutalist-shadow-black"
             >
               <SqlRunner adminToken={adminToken} />
-            </div>
-          ) : activeTab === "ai" ? (
-            <div
-              style={{ background: "var(--background)", flex: 1, minHeight: "600px" }}
-              className="brutalist-border brutalist-shadow-black"
-            >
-              <AiTab adminToken={adminToken} />
             </div>
           ) : activeTab === "notifications" ? (
             <div className="brutalist-border brutalist-shadow-black" style={{ background: "var(--background)", flex: 1, minHeight: "600px" }}>
@@ -768,9 +840,9 @@ export default function AdminApp() {
               <ScheduledNotifications adminToken={adminToken} />
             </div>
           ) : (
-            <div className="split-pane">
+            <div className={`split-pane ${activeTab === "add" ? "add-meme-layout" : ""}`}>
               {/* LEFT PANE - VAULT */}
-              <section className="left-pane">
+              {activeTab === "vault" && <section className="left-pane">
                 <div className="pane-header" style={{ flexDirection: "column", gap: "12px", alignItems: "stretch" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <h3>Meme Vault ({filteredCollection.length})</h3>
@@ -933,7 +1005,7 @@ export default function AdminApp() {
                     </button>
                   </div>
                 )}
-              </section>
+              </section>}
 
               {/* RIGHT PANE - EDITOR */}
               <section className="right-pane brutalist-border brutalist-shadow-black-lg">
