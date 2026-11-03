@@ -1,4 +1,4 @@
-﻿# MEME CAPSULE — MASTER KNOWLEDGE DOCUMENT & CANONICAL SYSTEM SPECIFICATION
+# MEME CAPSULE — MASTER KNOWLEDGE DOCUMENT & CANONICAL SYSTEM SPECIFICATION
 ### The Definitive System Reference for Developers, AI Coding Agents, Curators, Product Teams & Marketers
 
 > **Document Type:** Canonical Master Architecture, Technical & Product Specification  
@@ -683,7 +683,7 @@ The backend is completely serverless, deployed on Cloudflare Pages (`https://mem
 - **`POST /api/events`**: Ingests batched telemetry events into the D1 event queue.
 - **`POST /api/report`**: Receives user safety reports and logs them in `meme_reports`.
 - **`/reports`**: Serves the standalone HTML/CSS moderation dashboard for reviewing flagged content.
-- **`/api/cat/*` & `/api/curate/*`**: Authenticated endpoints serving the multi-judge curation system.
+- **`/api/cat/*` & `/api/curate/*`**: Authenticated endpoints serving the multi-judge curation system, including compare-and-swap (CAS) canonical media editing (`/api/curate/media/edit`).
 - **`/api/admin/*`**: Token-protected administrative endpoints for storage syncing, SQL execution, retained analytics management, and durable bulk intake (`/api/admin/ingestion/*`).
 
 ### 5.2 Cloudflare D1 Database Schemas & 3-Tier Partitioning Architecture (Migration 012)
@@ -878,6 +878,7 @@ All three codebases share a unified **Neo-Brutalist Cyber-Arcade** design langua
 | **Edge Backend** | Token-Gated Moderation Dashboard (`/reports`)| `[IMPLEMENTED]` | `functions/reports.ts` (Archive & Blacklist actions) |
 | **Edge Backend** | Multimodal AI Pre-Curator Loop (`/ai-judge`)| `[IMPLEMENTED]` | Gemini Vision API & NVIDIA NIM Llama 3.2 Vision runner |
 | **Edge Backend** | Telemetry Recalculation Engine | `[IMPLEMENTED]` | `functions/api/admin/analytics/recalculate.ts` |
+| **Edge Backend** | Human-Judge Image Editor & CAS Media Replacement (`/curate`) | `[IMPLEMENTED]` | `src/curate/editor/*`, `functions/api/curate/media/edit.ts`, `media_operations` audit logging |
 | **Discontinued UI** | Legacy Pastel Landing UI (`App.tsx`) | `[REMOVED]` | Removed from backend repo; default route `/` is `/curate` |
 | **Discontinued Web** | Giscus / Formspree Contact Dependencies | `[REMOVED]` | Migrated to Cloudflare Pages Functions + Resend API |
 | **Discontinued Web** | Stacking Card Scroll Animation | `[REVERTED]` | Replaced with authentic Kage scroll reveal |

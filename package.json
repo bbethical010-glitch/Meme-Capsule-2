@@ -12,13 +12,16 @@
     "test:analytics": "vitest run tests/analytics.test.ts",
     "test:ingestion": "vitest run tests/bulkIngestion.test.ts",
     "simulate:analytics": "tsx scripts/simulate-analytics-load.ts",
-    "test:vault": "vitest run tests/vault.test.ts"
+    "test:vault": "vitest run tests/vault.test.ts",
+    "test:editor": "vitest run tests/editor.test.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
+    "konva": "^10.9.1",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-konva": "^19.3.2",
     "vite": "^6.0.0"
   },
   "devDependencies": {

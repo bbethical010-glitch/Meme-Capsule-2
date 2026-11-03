@@ -520,3 +520,44 @@ For non-meme uploads (e.g., random photos, corrupt images, spam):
 - Unified D1 migration `013_add_nsfw_flag.sql` and schema `d1/schema.sql` to support both `is_nsfw CHECK (is_nsfw IN (0, 1))` and metadata `nsfw_flagged_by`.
 - Unified `src/curate/curateApi.ts` and `src/curate/CurateApp.tsx` to handle NSFW toggling through `POST /api/curate/save` (`moderation_only`) to ensure Cloudflare Pages function publication safety while preserving UI responsiveness and state updates.
 - Added permanent operating guidelines to `docs/AGENT_RULES.md` and `docs/AGENTS.md` enforcing remote branch synchronization (`git fetch origin`, inspect `origin/main`) before any feature planning to eliminate duplicate feature implementations and branch drift.
+
+---
+
+## 8. Admin Overhaul Phase 6 & Phase 7 — Human-Judge Image Editor & Verification Walkthrough
+
+### 8.1 Human-Judge Image Editor (`/curate`)
+- **Interactive Canvas with React-Konva**:
+  - Implemented client-side Neo-Brutalist Image Editor for human judges (Judges 1–3) and SuperAdmin in `src/curate/editor/`:
+    - `imageEditorTypes.ts`: Full state definitions, tool types (`select`, `crop`, `blur`, `mosaic`, `brush`, `rectangle`, `circle`, `text`), and undo/redo structures.
+    - `pixelEffects.ts`: In-place physical pixel manipulation algorithms for true cell-averaged mosaic pixelation and 1D separable box blur. Includes coordinate mapping for source resolution scaling, cropping, and 90°/180°/270° rotation.
+    - `exportCanvas.ts`: Offscreen canvas rendering engine executing full native-resolution composite exports without display-scaling blur or downsampling distortion.
+    - `KonvaCanvas.tsx`: Interactive multi-layer Konva viewport with transformation controls, drag-and-drop annotation editing, crop overlays, and blur/mosaic region handlers.
+    - `ImageEditorModal.tsx`: Neo-Brutalist editor modal featuring tool selectors, color swatches, brush stroke sliders, undo/redo buttons, and compare-and-swap CAS save action.
+- **UI Integration in CurateApp**:
+  - `src/curate/CurateApp.tsx` updated with `[🎨 EDIT IMAGE]` CTA buttons on both desktop actions toolbar and mobile quick actions bar.
+  - Global hotkey `E` / `e` opens the Image Editor modal for the currently inspected meme.
+  - Dynamic code splitting via `React.lazy` bundles Konva (360 kB) into an isolated chunk (`ImageEditorModal-*.js`), keeping initial load lean.
+
+### 8.2 Backend CAS Media Replacement (`functions/api/curate/media/edit.ts`)
+- **Strict Judge Authorization**:
+  - Requires authenticated session (`sessionUser.role === "judge" || "superadmin"`).
+  - Explicitly rejects advisory AI judges (`judge4`, `judge5`) with HTTP 403 Forbidden.
+- **Compare-and-Swap (CAS) Guarantee**:
+  - Receives `expected_storage_path` in multipart form data.
+  - Checks if `memes.storage_path === expected_storage_path`.
+  - Atomically updates `memes` pointer:
+    `UPDATE memes SET storage_path = ?, image_url = ?, updated_at = ... WHERE id = ? AND storage_path = ?`.
+  - If concurrent modification occurred (`meta.changes === 0`), rolls back newly uploaded R2 object and returns HTTP 409 Conflict.
+- **Audit History**:
+  - Records every modification in `media_operations` (`meme_id`, `actor_id`, `actor_name`, `old_storage_path`, `new_storage_path`, `operation_type`, `created_at`).
+
+### 8.3 Verification & Automated Test Suites
+- **Full Test Suite Results (27/27 Passed)**:
+  - `npm run test:editor`: 4 passed (mosaic pixel downsampling, box blur convolution, source crop/rotation coordinate transforms, out-of-bounds safety).
+  - `npm run test:vault`: 5 passed (server-side pagination, view modes, search predicates).
+  - `npm run test:ingestion`: 4 passed (bulk batch intake, bounded concurrency, duplicate warnings).
+  - `npm run test:analytics`: 5 passed (ingestion metrics, analytics event aggregation).
+  - `node --test tests/curationConsensus.test.mjs`: 9 passed (3-human consensus rules, advisory AI Judge 4/5 fallbacks, arbitration splits, and duplicate reconciliation).
+- **TypeScript & Vite Build**:
+  - `npm run build` compiled 1,713 modules with zero errors.
+  - Clean chunk splitting: `dist/assets/ImageEditorModal-COG5_ldu.js` (360 kB) loaded on demand.

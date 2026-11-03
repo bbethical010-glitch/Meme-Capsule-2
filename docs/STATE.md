@@ -290,3 +290,43 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
   - Rebased cleanly over merged PR #51 (`1dc0845`) and pushed commit `4e35bfe` to `origin/main`.
 - **Verification**: `npm run build` passed with zero errors; all 23 unit tests passed across `test:vault`, `test:ingestion`, `test:analytics`, and `curationConsensus`.
 
+---
+
+## 12. Admin Overhaul Phase 6 & Phase 7 — Human-Judge Image Editor & End-to-End Verification (November 3, 2026)
+
+- **Phase 6: Human-Judge Image Editor (`/curate`)**:
+  - Implemented client-side Neo-Brutalist Image Editor for human judges (Judges 1–3 and SuperAdmin) with tools for:
+    - Region-specific in-place Mosaic/Pixelation (`applyMosaicToImageData`) with true cell-averaged pixel downsampling.
+    - Region-specific in-place 1D separable box blur (`applyBlurToImageData`) with true canvas pixel modification.
+    - Source-resolution crop and 90°/180°/270° rotations (`calculateTransformedDimensions`).
+    - Freehand drawing brush with configurable stroke color palette and brush width slider.
+    - Geometric shapes (rectangles, ellipses) with configurable stroke color and thickness.
+    - Text overlay with high-contrast font and positioning.
+    - Full undo/redo history stack for all drawing and annotation operations.
+    - Live export preview dialog displaying modified image dimensions and file size.
+  - Offscreen Canvas rendering engine (`exportCanvas.ts`): renders source image at native full-resolution, applies crop/rotation, paints blur/mosaic layers directly onto ImageData, composites Konva stage vector layers, and outputs high-fidelity WebP/PNG Blob without display-scaling blur or quality degradation.
+  - UI Integration in `src/curate/CurateApp.tsx`:
+    - Responsive accessibility: `[🎨 EDIT IMAGE]` CTA button integrated into both the desktop curator actions strip and the mobile quick-action bar.
+    - Global keyboard shortcut: pressing `E` / `e` opens the editor directly for the currently inspected meme.
+    - Code splitting: Dynamic `React.lazy` loading ensures `konva` and `react-konva` (360 kB) are only loaded on-demand when the editor is opened.
+  - Backend CAS Protocol (`functions/api/curate/media/edit.ts`):
+    - Strict authorization: Authenticates session and permits only human judges or superadmins; explicitly rejects advisory AI judges (`judge4`, `judge5`) with HTTP 403.
+    - Compare-and-Swap (CAS) revision check: Validates `expected_storage_path` against current D1 `memes.storage_path`. If stale or concurrently modified, rejects with HTTP 409 Conflict.
+    - Uploads edited media under unique key (`memes/edited-${memeId}-${timestamp}-${uuid}.${ext}`).
+    - Updates `memes` pointer atomically: `UPDATE memes SET storage_path = ?, image_url = ?, updated_at = ... WHERE id = ? AND storage_path = ?`.
+    - If atomic update changes 0 rows, rolls back the uploaded R2 object and returns 409.
+    - Audit logging: Logs edit history into `media_operations` (`id`, `meme_id`, `actor_id`, `actor_name`, `old_storage_path`, `new_storage_path`, `operation_type`, `created_at`).
+    - Recovers old storage objects safely without breaking active sessions.
+- **Phase 7: End-to-End Verification & Rollout**:
+  - Full automated test suite passing (27/27 tests across 5 test suites):
+    - `npm run test:editor` (4/4 tests): tests mosaic pixelation, box blur convolution, source rotation/crop coordinate transforms, and out-of-bounds safety.
+    - `npm run test:vault` (5/5 tests): tests vault view modes, pagination clamping, and filter predicates.
+    - `npm run test:ingestion` (4/4 tests): tests batch creation, upload concurrency, duplicate warnings, and job states.
+    - `npm run test:analytics` (5/5 tests): tests ingestion analytics, queue depth, and metrics aggregation.
+    - `node --test tests/curationConsensus.test.mjs` (9/9 tests): verifies 3-human consensus rules, advisory AI Judge 4/5 fallbacks, arbitration splits, and duplicate reconciliation.
+  - Production build: `tsc && vite build` succeeded with zero TypeScript errors and bundle chunks properly code-split (`ImageEditorModal-COG5_ldu.js` 360 kB).
+  - Ingestion & Add Memes Status:
+    - Local D1 schema verified against migration `025_durable_meme_ingestion.sql` (`ingestion_batches`, `ingestion_jobs`, `ingestion_ai_evaluations`).
+    - Live Cloudflare Pages production environment gracefully returns 503 on ingestion endpoints due to `hasIngestionSchema` safety guard pending production `wrangler d1 migrations apply meme-capsule-db --remote` execution with user Cloudflare credentials.
+
+

@@ -523,7 +523,7 @@
 /* Quick Action Tap Buttons Bar on Mobile: 3-column layout for OVERRIDE, NSFW, and FORCE REMOVE */
 .curate-mobile-quick-actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   margin-top: 6px;
   margin-bottom: 12px;
@@ -552,6 +552,12 @@
 
 .curate-mobile-action-btn:active {
   transform: scale(0.97);
+}
+
+.curate-mobile-action-btn--edit {
+  border-color: #a855f7;
+  color: #c084fc;
+  box-shadow: 2px 2px 0px rgba(168, 85, 247, 0.4);
 }
 
 .curate-mobile-action-btn--override {

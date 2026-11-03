@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import {
   CURATION_TOPICS,
   CURATION_TONES,
@@ -23,6 +23,8 @@ import { useAiJudgeLoop } from "./ai-judge/useAiJudgeLoop";
 import { useIsMobile } from "./useIsMobile";
 import { useCurateGestures } from "./useCurateGestures";
 import "./curate.css";
+
+const ImageEditorModal = lazy(() => import("./editor/ImageEditorModal"));
 
 interface UndoHistoryItem {
   meme: CurateMemeItem;
@@ -82,6 +84,7 @@ export default function CurateApp() {
   const [showForceRemoveModal, setShowForceRemoveModal] = useState<boolean>(false);
   const [forceRemoveReason, setForceRemoveReason] = useState<string>("");
   const [forceRemoveLoading, setForceRemoveLoading] = useState<boolean>(false);
+  const [showImageEditor, setShowImageEditor] = useState<boolean>(false);
   const [nsfwLoading, setNsfwLoading] = useState<boolean>(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "warning" | "error" } | null>(null);
   const isNsfw = Boolean(currentMeme?.is_nsfw);
@@ -144,7 +147,8 @@ export default function CurateApp() {
     undoStack,
     overrideMode,
     showForceRemoveModal: false,
-    forceRemoveLoading: false
+    forceRemoveLoading: false,
+    showImageEditor: false
   });
 
   useEffect(() => {
@@ -160,9 +164,10 @@ export default function CurateApp() {
       undoStack,
       overrideMode,
       showForceRemoveModal,
-      forceRemoveLoading
+      forceRemoveLoading,
+      showImageEditor
     };
-  }, [status, topics, tone, mechanisms, duplicateOf, note, currentMeme, isSaving, undoStack, overrideMode, showForceRemoveModal, forceRemoveLoading]);
+  }, [status, topics, tone, mechanisms, duplicateOf, note, currentMeme, isSaving, undoStack, overrideMode, showForceRemoveModal, forceRemoveLoading, showImageEditor]);
 
   const handleLoginSuccess = (newToken: string, newUser: CuratorUser) => {
     sessionStorage.setItem("curator_token", newToken);
@@ -884,6 +889,25 @@ export default function CurateApp() {
     setNote(last.note);
   }, []);
 
+  // Image Editor Save Callback (Phase 6 CAS canonical media update)
+  const handleEditorSaveSuccess = useCallback((updated: { id: string; image_url: string; storage_path?: string }) => {
+    setCurrentMeme((prev) => {
+      if (!prev || prev.id !== updated.id) return prev;
+      return {
+        ...prev,
+        image_url: updated.image_url,
+        storage_path: updated.storage_path || prev.storage_path
+      };
+    });
+    prefetchQueueRef.current = prefetchQueueRef.current.map((m) =>
+      m.id === updated.id
+        ? { ...m, image_url: updated.image_url, storage_path: updated.storage_path || m.storage_path }
+        : m
+    );
+    setShowImageEditor(false);
+    setToast({ message: "CANONICAL IMAGE UPDATED ✓", type: "success" });
+  }, []);
+
   // Conflict-free Keyboard Event Listener (Active only in Judge view)
   useEffect(() => {
     if (viewMode !== "judge") return;
@@ -911,11 +935,25 @@ export default function CurateApp() {
         return; // Suspend all other shortcuts while modal is open
       }
 
+      // If Image Editor modal is open, suspend all curation shortcuts
+      if (stateRef.current.showImageEditor) {
+        return;
+      }
+
       // Force Remove shortcut: Shift+X (works anywhere in Judge view)
       if (e.shiftKey && (e.key === "X" || e.key === "x")) {
         e.preventDefault();
         if (stateRef.current.currentMeme && !stateRef.current.forceRemoveLoading && !stateRef.current.isSaving) {
           setShowForceRemoveModal(true);
+        }
+        return;
+      }
+
+      // Image Editor shortcut: E / e (works anywhere in Judge view when viewing meme)
+      if ((e.key === "E" || e.key === "e") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        if (stateRef.current.currentMeme && !stateRef.current.isSaving) {
+          setShowImageEditor(true);
         }
         return;
       }
@@ -1679,6 +1717,15 @@ export default function CurateApp() {
             <div className="curate-mobile-quick-actions">
               <button
                 type="button"
+                className="curate-mobile-action-btn curate-mobile-action-btn--edit"
+                onClick={() => setShowImageEditor(true)}
+                title="Edit / Redact Meme (Crop, Blur, Draw, Text)"
+              >
+                <span>🎨 EDIT IMAGE</span>
+                <span style={{ fontSize: "9px", opacity: 0.8 }}>REDACT & CROP</span>
+              </button>
+              <button
+                type="button"
                 className="curate-mobile-action-btn curate-mobile-action-btn--override"
                 onClick={() => setOverrideMode(true)}
               >
@@ -1906,6 +1953,25 @@ export default function CurateApp() {
                     title="Permanently remove meme from storage & database (Shift+X)"
                   >
                     ⚡ FORCE REMOVE [SHIFT+X]
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowImageEditor(true)}
+                    style={{
+                      background: "#2b1055",
+                      border: "2px solid #a855f7",
+                      color: "#f3e8ff",
+                      padding: "4px 10px",
+                      fontSize: "11px",
+                      fontFamily: "Oswald, sans-serif",
+                      fontWeight: "bold",
+                      cursor: "pointer",
+                      boxShadow: "2px 2px 0px #a855f7",
+                      letterSpacing: "0.5px"
+                    }}
+                    title="Edit / Redact Meme Image (Crop, Blur, Brush, Shapes, Text) [E]"
+                  >
+                    🎨 EDIT IMAGE [E]
                   </button>
                   <button
                     type="button"
@@ -2263,6 +2329,37 @@ export default function CurateApp() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Image Editor Modal (Phase 6) */}
+      {showImageEditor && currentMeme && (
+        <Suspense
+          fallback={
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.85)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#f4c300",
+                fontFamily: "Anton",
+                fontSize: "24px",
+                zIndex: 9999
+              }}
+            >
+              LOADING IMAGE EDITOR...
+            </div>
+          }
+        >
+          <ImageEditorModal
+            meme={currentMeme}
+            token={token || undefined}
+            onClose={() => setShowImageEditor(false)}
+            onSaveSuccess={handleEditorSaveSuccess}
+          />
+        </Suspense>
       )}
 
       {/* Account Settings Modal */}
