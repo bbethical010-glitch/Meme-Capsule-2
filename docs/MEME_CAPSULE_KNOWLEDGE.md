@@ -138,7 +138,7 @@ Modern internet culture is trapped inside social media feeds (Instagram, TikTok,
 - **Pro Tier In-App Purchase:** One-time upgrade (`remove_ads_forever` via `@capgo/native-purchases`) unlocking Zero Ads, Unlimited Vault, and permanent Triple Drop access.
 - **Multi-Judge Consensus & SuperAdmin Arbitration:** Human curation engine (`/curate`) with Layer 0 keyboard navigation and binding consensus arbitration.
 - **3-Tier D1 Status Partitioning (Migration 012):** Explicit separation of Active Capsule (111), Superadmin Excluded (53), and Uncurated Backlog (4,947) across database, APIs, and `/admin` UI.
-- **Admin Control Panel & SQL Runner (`/admin`):** Grouped Collection/Curation/Operations navigation, 5-metric top stats bar, dedicated `[EXCLUDED]` filter tab, R2 binary uploads, R2-to-D1 sync, SQL Playground, Push Notifications, and responsive keyboard-accessible sidebar controls. The legacy Admin Analytics and Admin AI Categorisation views were retired in Phase 3; their retained backend contracts are separate from Android telemetry and notification workers.
+- **Admin Control Panel & SQL Runner (`/admin`):** Grouped Collection/Curation/Operations navigation, 5-metric top stats bar, dedicated `[EXCLUDED]` filter tab, R2 binary uploads, R2-to-D1 sync, SQL Playground, Push Notifications, responsive keyboard-accessible sidebar controls, and durable bulk image intake. The legacy Admin Analytics and Admin AI Categorisation views were retired in Phase 3; their retained backend contracts are separate from Android telemetry and notification workers.
 - **Token-Gated Safety Moderation (`/reports`):** Ingestion of user-flagged content (`POST /api/report`) with one-click soft-archival and `content_blacklist` enforcement.
 - **Multimodal AI Pre-Curator Loop (`/ai-judge`):** Gemini Vision and Python NVIDIA NIM Llama 3.2 11B Vision pipeline categorizing humor mechanisms, topics, and safety.
 
@@ -147,7 +147,7 @@ Modern internet culture is trapped inside social media feeds (Instagram, TikTok,
 - **Mobile Frontend:** React 19, TypeScript 5.8, Vite 6.2, Tailwind CSS v4 (`@tailwindcss/vite`), `@react-spring/web`, `@use-gesture/react`.
 - **Web Platform & Pre-rendering:** React 18, Vite 5, Tailwind CSS v3, React Router DOM v6, static HTML pre-rendering via `vite-plugin-prerender` with deterministic `ReactSSRRenderer` for GitHub Actions CI.
 - **Edge Backend:** **Cloudflare Pages Functions** running on V8 isolates with zero cold-start latency (`functions/api/*`, `functions/reports.ts`).
-- **Database:** **Cloudflare D1** (serverless SQLite at the edge) with 13 production migrations.
+- **Database:** **Cloudflare D1** (serverless SQLite at the edge) with additive repository migrations through `025`; migration `025` is the local durable-intake foundation pending production rollout.
 - **Media Storage:** **Cloudflare R2** (S3-compatible object storage with **$0.00 egress fees**).
 - **AI Evaluation Pipeline:** Multimodal Gemini Vision (`@google/genai`) on Cloudflare Functions and an offline Python runner executing **NVIDIA NIM Llama 3.2 11B Vision Instruct**.
 - **SEO / GEO / AEO:** 4 linked Schema.org JSON-LD entities (`WebSite`, `Organization`, `MobileApplication`, `FAQPage`), `llms.txt` and `llms-full.txt` protocols for frontier AI crawlers, and XML Sitemap.
@@ -684,10 +684,10 @@ The backend is completely serverless, deployed on Cloudflare Pages (`https://mem
 - **`POST /api/report`**: Receives user safety reports and logs them in `meme_reports`.
 - **`/reports`**: Serves the standalone HTML/CSS moderation dashboard for reviewing flagged content.
 - **`/api/cat/*` & `/api/curate/*`**: Authenticated endpoints serving the multi-judge curation system.
-- **`/api/admin/*`**: Token-protected administrative endpoints for storage syncing, SQL execution, and analytics management.
+- **`/api/admin/*`**: Token-protected administrative endpoints for storage syncing, SQL execution, retained analytics management, and durable bulk intake (`/api/admin/ingestion/*`).
 
 ### 5.2 Cloudflare D1 Database Schemas & 3-Tier Partitioning Architecture (Migration 012)
-Meme Capsule uses Cloudflare D1 (serverless SQLite). The database schema has evolved through 13 migration files (`d1/migrations/`).
+Meme Capsule uses Cloudflare D1 (serverless SQLite). The repository schema has evolved through additive migrations to `025` (`d1/migrations/`). Migration `025_durable_meme_ingestion.sql` adds durable batch, item, and independent Judge 4/5 advisory-evaluation state without changing the publication gate.
 
 #### The 3-Tier Partitioning Architecture (`curation_status`):
 To prevent mixing rejected memes with uncurated backlog items, Migration 012 introduced the `curation_status` column on the `memes` table:
@@ -769,7 +769,9 @@ When judges diverge in their votes, the meme surfaces in the **SuperAdmin Comman
 ### 5.6 Admin Console, 5-Metric Status Bar & SQL Runner (`/admin`)
 Token-protected control center (`ADMIN_API_TOKEN`):
 - **Grouped Navigation:** Collection (`Meme Vault`, `Add Memes`), Curation links (`Human Curation`, `AI Judge Workflow`, `Reports / Moderation`), and Operations (`Push Notifications`, `SQL Playground`, local drafts, and R2 sync).
-- **Responsive Sidebar:** Desktop collapse to an icon rail with hover/focus expansion, accessible labels/tooltips and pin/toggle control; mobile drawer with an accessible overlay.
+- **Responsive Sidebar:** Desktop collapse to an icon rail with hover/focus expansion, accessible labels/tooltips and pin/toggle control; mobile drawer with an accessible overlay. The legacy Admin Analytics and Admin AI Categorisation React views remain removed while their backend contracts are preserved.
+- **Phase 4 Bulk Intake:** Add Memes accepts up to 50 images by multi-select or drag/drop, previews and validates them, generates stable SHA-256 intake IDs, warns about duplicate content, and uploads with bounded concurrency. Durable batch/job/evaluation state survives refreshes; failed items can be retried without publishing content.
+- **Private Intake Gate:** Migration `025` stores archived/inactive intake metadata, upload recovery state, independent Judge 4/5 advisory evaluations, leases, and retries. New intake items become visible to human curators only at `human_ready` after both advisory evaluations succeed. AI never writes human ballots or final keeps.
 - **Top Stats Bar:** Displays 5 distinct metrics:
   - `TOTAL`: **5111**
   - `ACTIVE`: **111**
@@ -865,13 +867,14 @@ All three codebases share a unified **Neo-Brutalist Cyber-Arcade** design langua
 | **Promo Web (`.wtf`)** | Google AdSense Unit `meme1` | `[IMPLEMENTED]` | `AdBanner.tsx` (`slot 6291908699`, deferred load) |
 | **Promo Web (`.wtf`)** | Deterministic Static Prerender (6 Routes) | `[IMPLEMENTED]` | `vite-plugin-prerender` + per-route SEO injection |
 | **Edge Backend** | Serverless Edge API on Cloudflare Pages | `[IMPLEMENTED]` | `functions/api/random-meme.ts`, `daily-meme.ts`, etc. |
-| **Edge Backend** | Cloudflare D1 SQLite Database (13 Migrations)| `[IMPLEMENTED]` | `d1/migrations/` (000 through 012) |
+| **Edge Backend** | Cloudflare D1 SQLite Database (additive migrations through 025)| `[IMPLEMENTED LOCALLY]` | `d1/migrations/` (025 adds durable bulk intake; production rollout pending) |
 | **Edge Backend** | 3-Tier Status Partitioning (Migration 012) | `[IMPLEMENTED]` | `curation_status`: 111 Keep, 53 Excluded, 4,947 Backlog |
 | **Edge Backend** | Cloudflare R2 Media Bucket (`env.BUCKET`) | `[IMPLEMENTED]` | `wrangler.toml`, zero egress public CDN |
 | **Edge Backend** | Multi-Judge Consensus Portal (`/curate`) | `[IMPLEMENTED]` | `src/curate/CurateApp.tsx` (Layer 0 keyboard shortcuts) |
 | **Edge Backend** | SuperAdmin Arbitration Dashboard | `[IMPLEMENTED]` | `src/curate/super/CurateSuperDashboard.tsx` |
 | **Edge Backend** | Admin Console with 5 Stats Cards (`/admin`)| `[IMPLEMENTED]` | `src/admin/AdminApp.tsx` (Total, Active, Excl, Arch, Draft)|
 | **Edge Backend** | Admin Phase 3 navigation and retired legacy views | `[IMPLEMENTED]` | `src/admin/AdminApp.tsx`, `src/admin/admin.css`; legacy Admin Analytics/AI UI removed while backend contracts remain |
+| **Edge Backend** | Durable Bulk Image Intake (`/admin`)| `[IMPLEMENTED LOCALLY]` | `src/admin/BulkIngestionWorkspace.tsx`, `functions/api/admin/ingestion/*`, migration 025 |
 | **Edge Backend** | Token-Gated Moderation Dashboard (`/reports`)| `[IMPLEMENTED]` | `functions/reports.ts` (Archive & Blacklist actions) |
 | **Edge Backend** | Multimodal AI Pre-Curator Loop (`/ai-judge`)| `[IMPLEMENTED]` | Gemini Vision API & NVIDIA NIM Llama 3.2 Vision runner |
 | **Edge Backend** | Telemetry Recalculation Engine | `[IMPLEMENTED]` | `functions/api/admin/analytics/recalculate.ts` |
@@ -990,7 +993,7 @@ ECOSYSTEM STRUCTURE:
    - Core Features: Live Drop Simulator (upfront 10-meme FIFO prefetch buffer + lockout bumper with Play Store UTM tracking), 3D interactive phone mockups (5 authentic WebP captures + lightbox zoom), Kage atmospheric UI (Preloader, CustomCursor, GrainOverlay, Vignette, ScrollRail), Section 04.5 Under the Hood, /about Press Kit (copy kit & brand downloads), /privacy policy, Formspree contact form (xwlenwzr with privacy consent), Google AdSense unit meme1 (slot 6291908699, ca-pub-2093403233028868), and SEO/GEO (llms.txt, Schema.org).
 
 3. SERVERLESS EDGE BACKEND & INTERNAL WORKBENCHES (meme-capsule-eww.pages.dev - This Repo):
-   - Tech: Cloudflare Pages Functions, Cloudflare D1 (SQLite with 13 migrations), Cloudflare R2 (bucket memes, $0.00 egress).
+   - Tech: Cloudflare Pages Functions, Cloudflare D1 (SQLite with additive migrations through 025), Cloudflare R2 (bucket memes, $0.00 egress).
    - 3-Tier Status Partitioning (Migration 012):
      * curation_status = 'keep' (111 memes, status = 'active', is_active = 1) -> Live in public Capsule drops.
      * curation_status = 'excluded' (53 memes, status = 'archived', is_active = 0) -> Authoritatively rejected by Superadmin.
@@ -998,7 +1001,7 @@ ECOSYSTEM STRUCTURE:
      * Total Corpus: 5,111 memes.
    - Internal Tools (Neo-Brutalist dark theme #121212, Anton/Oswald fonts):
      * /curate & /categorise: Multi-judge consensus curation with Layer 0 keyboard shortcuts (K, E, D, L) and SuperAdmin conflict arbitration.
-      * /admin: Grouped Collection/Curation/Operations navigation, 5-metric status bar, dedicated [EXCLUDED] filter tab, D1/R2 sync, SQL runner, Push Notifications, and responsive sidebar. Legacy Admin Analytics and Admin AI Categorisation UI are removed; retained backend endpoints remain separate from Android telemetry.
+     * /admin: Grouped Collection/Curation/Operations navigation, 5-metric status bar, dedicated [EXCLUDED] filter tab, D1/R2 sync, SQL runner, Push Notifications, responsive sidebar, and durable bulk image intake. Legacy Admin Analytics and Admin AI Categorisation UI are removed; retained backend endpoints remain separate from Android telemetry.
      * /reports: Token-gated moderation dashboard for user-flagged memes (archive / blacklist).
      * /ai-judge: Multimodal vision loop (Gemini Vision + NVIDIA NIM Llama 3.2 Vision runner) for pre-curation recommendations.
    - Note: Old pastel root landing UI (App.tsx, styles.css) has been REMOVED. Default route / serves <CurateApp />.
@@ -1010,6 +1013,3 @@ CRITICAL RULES & CONSTRAINTS:
 4. CLEAR CODEBASE BOUNDARIES: Maintain strict separation between Mobile APK, Promo Web, and Edge Backend.
 =========================================================
 ```
-
-
-

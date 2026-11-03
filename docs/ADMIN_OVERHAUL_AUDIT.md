@@ -12,7 +12,8 @@
 | `origin/main` | Same commit as HEAD |
 | Production URL | `https://meme-capsule-eww.pages.dev` |
 | Phase 0 functional changes | None |
-| Phase 3 implementation status | Authorized and implemented locally; Phases 1 and 2 held |
+| Phase 3 implementation status | Authorized and implemented locally at the recorded baseline |
+| Phase 4 implementation status | Phase 1/2 prerequisites and Phase 4 implemented locally on 2026-11-03 |
 | Documentation changes | Audit and affected project documentation updated |
 | Production deployment or migration | None |
 
@@ -876,8 +877,9 @@ layer and its exclusive frontend modules:
 7. **Remaining limitations:** Backend legacy analytics/AI endpoints remain
    intentionally preserved pending a separate deprecation decision. The existing
    Phase 0 baseline typecheck and clean migration-chain issues remain open.
-8. **Next phase:** Phase 1 and Phase 2 are held; operator approval is required
-   before schema or ingestion/AI workflow changes.
+8. **Next phase:** Phase 1 and Phase 2 prerequisites were authorized and
+   implemented locally with Phase 4; production rollout remains gated by the
+   migration and credential checks recorded below.
 
 ## Phase report
 
@@ -898,5 +900,77 @@ layer and its exclusive frontend modules:
    incomplete clean bootstrap, R2/D1 non-atomic operations, Admin client-side
    corpus loading, inconsistent auth compatibility paths, and legacy documentation
    drift remain open by design for approved later phases.
-8. **Next phase:** Phase 1 database foundation and durable ingestion state remains
-   held pending the operator's separate approval; Phase 2 AI gating is also held.
+8. **Next phase:** Phase 1 and Phase 2 foundations were authorized and implemented
+   locally as part of Phase 4. Production rollout remains gated by migration
+   `025`, remote schema verification, and advisory provider configuration.
+
+## Phase 1/2 and Phase 4 implementation record
+
+The operator authorized the previously held Phase 1/2 prerequisites together with
+Phase 4 on 2026-11-03. The implementation remains additive and keeps public
+final-`keep` gating, human consensus, and AI advisory separation unchanged.
+
+### Durable schema and state
+
+- `d1/migrations/025_durable_meme_ingestion.sql` adds `ingestion_batches`,
+  `ingestion_jobs`, and `ingestion_ai_evaluations`. The tables store stable batch
+  and item idempotency keys, generated intake IDs, content hashes, upload state,
+  processing leases, bounded errors, retry timing, and independent Judge 4/5
+  structured results.
+- New intake jobs are created before the `memes` row because the browser first
+  confirms metadata and then uploads media. After R2 success, the upload route
+  creates an archived/inactive `memes` row. No new job has a foreign key that
+  would require a pre-upload meme row.
+- `functions/_shared/ingestion.ts` centralizes image-only limits and signatures,
+  SHA-256 hashing, durable status derivation, migration availability checks, and
+  the compatibility lookup used by the human queue.
+
+### API and workflow
+
+- `functions/api/admin/ingestion/batches.ts` creates or reads idempotent batches,
+  validates count/size/type/IDs, initializes both advisory evaluation rows, and
+  reports duplicate content warnings.
+- `functions/api/admin/ingestion/upload.ts` validates actual image bytes,
+  recomputes the content hash, writes a unique R2 key, persists private metadata,
+  and retains a recoverable uploaded state when a later D1 write fails.
+- `functions/api/admin/ingestion/process.ts` claims one uploaded job with a
+  lease, evaluates configured `judge4` and `judge5` presets, validates taxonomy
+  output, retries transient failures up to three attempts, and transitions to
+  `human_ready` only when both evaluations succeed. It never writes
+  `meme_curation`, calls a human approval endpoint, activates a meme, or creates
+  a final keep. `functions/api/admin/ingestion/retry.ts` resets only selected
+  failed jobs/evaluations.
+- `functions/api/curate/next.ts`, `list.ts`, and `super/memes.ts` hide new intake
+  rows until `human_ready`; `approve.ts` and `save.ts` reject direct editorial
+  writes before that state. Legacy rows without an ingestion job retain the
+  compatibility behavior.
+- `src/admin/BulkIngestionWorkspace.tsx`, `src/admin/bulkIngestion.ts`,
+  `src/lib/adminApi.ts`, `src/admin/AdminApp.tsx`, and `src/admin/admin.css`
+  implement the review grid, drag/drop, stable IDs, local draft validation,
+  bounded three-item concurrency, server progress restore, and failed-item
+  retry controls. The existing single-meme editor remains available.
+
+### Decisions and limitations
+
+- The first release accepts PNG, JPEG, GIF, WebP, and AVIF images only, with a
+  20 MiB item limit, 50-item batch limit, and 200 MiB total descriptor limit.
+  Video is rejected at both client and server boundaries.
+- AI configuration uses the existing encrypted `cat_judge_ai_presets` rows keyed
+  by the stable `judge4` and `judge5` usernames. No secret values are committed.
+- Processing is an authenticated, request-driven bounded endpoint rather than a
+  newly deployed scheduled Worker. Leases and retry state preserve the data
+  contract for a later scheduler without requiring a second deployment now.
+- Browser `localStorage` preserves batch metadata and server progress, but cannot
+  persist a `File` object. An upload that had not started must be selected again
+  after refresh; already uploaded and processing items resume from D1 state.
+
+### Verification and rollout boundary
+
+- Local execution of migration 025 succeeded, and `PRAGMA table_info` verified all
+  three new tables. `npm run build`, `npm run test:ingestion`,
+  `npm run test:analytics`, and the 9-case consensus test suite passed.
+- Functions typecheck still reports the baseline unrelated errors documented in
+  Section 12; the new ingestion files introduced no additional reported errors.
+- Remote `PRAGMA` verification was attempted read-only and blocked by missing
+  `CLOUDFLARE_API_TOKEN`. No production migration, deployment, R2 write, or
+  secret operation was performed.

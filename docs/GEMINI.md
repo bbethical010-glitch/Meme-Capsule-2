@@ -13,7 +13,7 @@ The public end-user mobile experience (Android APK `com.meme.capsule` and promot
 - **Frontend / Internal Workbenches:** React 19, TypeScript, Vite (`/curate`, `/admin`, `/reports`, `/ai-judge`, `/categorise`)
 - **Styling:** Neo-Brutalist CSS (`curate.css`, `admin.css`, `cat.css`, `aiJudge.css`) with bold typography (`Anton`, `Oswald`, `Chivo`)
 - **Backend/API:** Cloudflare Pages Functions (`functions/api/`, `functions/reports.ts`)
-- **Database:** Cloudflare D1 (SQLite) with additive migrations through `018`
+- **Database:** Cloudflare D1 (SQLite) with additive migrations through `025`
 - **Storage:** Cloudflare R2 for media assets
 - **Hosting:** Cloudflare Pages
 
@@ -24,6 +24,7 @@ The public end-user mobile experience (Android APK `com.meme.capsule` and promot
   3. **Developer / Internal Backend (This Repo)**: Multi-judge consensus curation (`/curate`), D1/R2 administrative management (`/admin`), token-gated user safety moderation (`/reports`), and AI-assisted pre-curation loop (`/ai-judge`).
 - **Data Fallbacks:** Dual-source meme delivery (Cloudflare D1 repository + Reddit gateway), with static offline fallbacks (`src/data/fallbackMemes.ts`).
 - **Admin Console Phase 3:** `/admin` now uses grouped Collection, Curation, and Operations navigation with accessible collapsible desktop and mobile drawer behavior. The retired Admin Analytics and legacy Admin AI Categorisation React views are removed; retained backend contracts and Android/notification systems remain independent.
+- **Durable bulk intake:** Migration `025` and `/api/admin/ingestion/*` store idempotent image batches, R2 upload recovery, independent Judge 4/5 advisory evaluations, leases, retries, and a `human_ready` gate. `/admin` exposes the review/upload workspace without publishing or creating human votes.
 
 ## Building and Running
 

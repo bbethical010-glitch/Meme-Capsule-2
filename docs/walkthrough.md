@@ -5,7 +5,7 @@
 > that were already present in this file. Those similarly named analytics phases
 > are separate from the Admin Overhaul phase numbers.
 >
-> **Last updated:** 2026-11-03 07:48:55 +05:30
+> **Last updated:** 2026-11-03 10:33:30 +05:30
 
 ## Source-of-truth and current branch state
 
@@ -74,15 +74,37 @@ processing, retry-wait, failed, and human-ready, with idempotency, leases,
 bounded errors, independent AI evaluation records, and an optional media
 operation saga.
 
-### Verified history and status
+### Implementation record
 
-- No `025_` migration, ingestion batch/job table, ingestion worker, or ingestion
-  API exists in the current repository.
-- The Phase 0 audit contains the candidate schema and indexes, but it is a
-  proposal rather than an applied implementation.
-- The clean migration bootstrap issue and remote migration-history access remain
-  unresolved.
-- **Status:** Held/pending. No Phase 1 implementation has been performed.
+- Added `d1/migrations/025_durable_meme_ingestion.sql` with additive
+  `ingestion_batches`, `ingestion_jobs`, and `ingestion_ai_evaluations` tables.
+  The tables store stable idempotency keys, generated intake IDs, content hashes,
+  upload state, retry/lease state, bounded errors, and per-judge advisory result
+  fields. Historical migrations were not edited.
+- Added `functions/_shared/ingestion.ts` for server-side limits, image-signature
+  checks, SHA-256 helpers, schema availability checks, batch status derivation,
+  and read-only human-ready lookup. New intake tables do not replace
+  `memes.status` or human curation tables.
+- Added authenticated `/api/admin/ingestion/batches` creation/read,
+  `/api/admin/ingestion/upload`, and `/api/admin/ingestion/retry` contracts.
+  Batch creation is idempotent; upload uses unique R2 keys and persists a
+  private archived/inactive `memes` row only after R2 success. R2-success/D1
+  failure remains recoverable through the durable job row.
+- Added queue compatibility gates to `functions/api/curate/next.ts`,
+  `functions/api/curate/list.ts`, and `functions/api/curate/super/memes.ts`.
+  `functions/api/curate/approve.ts` and `functions/api/curate/save.ts` reject
+  editorial votes for a new intake item until its job is `human_ready`; legacy
+  rows without a job retain the existing behavior.
+
+### Verification and status
+
+- The migration SQL was executed against the disposable local D1 state and all
+  three new tables were verified with `PRAGMA table_info(...)`.
+- Remote schema verification was attempted read-only but is blocked because this
+  environment has no `CLOUDFLARE_API_TOKEN`; no production migration or query
+  was executed.
+- **Status:** Implemented locally. Production use requires applying migration
+  `025` after the remote migration-history/bootstrap decision is resolved.
 
 ## Admin Overhaul Phase 2 — AI preprocessing and human-ready gating
 
@@ -95,12 +117,34 @@ persist results, and never write human ballots or call human approval endpoints.
 New items remain archived and inactive; legacy items without ingestion jobs retain
 legacy queue behavior.
 
-### Verified history and status
+### Implementation record
 
-- No durable intake AI worker or `human_ready` gate exists in the current code.
-- Current AI Judge and `/curate` paths remain the pre-existing separate systems
-  documented in the audit; they were not converted into the Phase 2 pipeline.
-- **Status:** Held/pending. No Phase 2 implementation has been performed.
+- Added `functions/api/admin/ingestion/process.ts`, a bounded, lease-aware
+  processor for one uploaded job at a time. It loads the configured Judge 4 and
+  Judge 5 advisory presets, fetches the private R2 object, validates structured
+  taxonomy output, persists independent evaluation rows, and retries transient
+  provider failures up to three attempts with bounded backoff.
+- The processor never calls `/api/curate/approve`, never writes `meme_curation`,
+  never creates a final keep, and never activates a meme. Only both successful
+  evaluation rows transition the job to `human_ready`.
+- An optional compatibility write updates `ai_curation_predictions` for the
+  existing read-only advisory preview; durable evaluation rows remain the
+  readiness source. Missing legacy preview storage does not block readiness.
+- The processor uses existing encrypted `cat_judge_ai_presets` records for the
+  stable `judge4` and `judge5` keys. Missing provider configuration is recorded
+  as a bounded terminal item error that can be retried after configuration.
+
+### Verification and status
+
+- New intake gating and the advisory-only boundary are covered by code paths and
+  the frontend status surface; existing 9-case human consensus tests remain
+  unchanged and pass.
+- This release uses an authenticated, UI-driven bounded processor endpoint
+  rather than adding a separate scheduled Worker. Durable leases and retry state
+  make later Worker scheduling additive without changing the data contract.
+- **Status:** Implemented locally with the documented request-driven processor
+  decision. Provider configuration and production migration remain rollout
+  prerequisites.
 
 ## Admin Overhaul Phase 3 — Navigation and retired Admin views
 
@@ -158,34 +202,47 @@ Provide reliable, resumable bulk image ingestion in the Admin Console:
 10. Never publish, create a final keep, set `is_active = 1`, or create a human
     ballot as a side effect of upload.
 
-### Dependency and blocker identified before implementation
+### Implementation record
 
-Phase 4's required server-side behavior depends on the Phase 1 durable
-`ingestion_batches`/`ingestion_jobs` model and Phase 2 AI processing/readiness
-contract. Both phases are currently held by explicit prior operator direction and
-have not been implemented. The current repository still has only single-file R2
-upload plus separate one-row metadata creation; it has no durable batch/job API,
-retry state, or worker-backed AI status. Implementing the complete Phase 4
-acceptance criteria without those prerequisites would require silently starting
-Phase 1/2 schema and behavior work, which would violate the phase boundary.
+- Added `src/admin/BulkIngestionWorkspace.tsx` and
+  `src/admin/bulkIngestion.ts`. The Admin Add Memes workspace now supports
+  multi-select and drag/drop image review, thumbnails, editable titles,
+  generated stable IDs, SHA-256 identities, size/type validation, duplicate
+  warnings, removal before submission, per-item upload/AI states, resume-safe
+  status refresh, and retry-only-failed actions.
+- Added bulk API methods to `src/lib/adminApi.ts` and mounted the workspace from
+  `src/admin/AdminApp.tsx` without removing the existing single-meme editor.
+- Added responsive Neo-Brutalist bulk intake styling to `src/admin/admin.css`.
+  The UI limits batches to 50 images, 20 MiB per image, and 200 MiB total, and
+  clearly rejects video in the first release.
+- Added `tests/bulkIngestion.test.ts` and the `npm run test:ingestion` script for
+  supported-image/video rejection, size validation, stable hashing, and batch
+  confirmation boundaries.
 
-### Current groundwork verification
+### Database and configuration changes
 
-- Confirmed the full Phase 4 requirements from the original plan and
-  `docs/ADMIN_OVERHAUL_AUDIT.md`; no material Phase 4 requirement is missing or
-  ambiguous.
-- Confirmed current files: `src/admin/AdminApp.tsx`, `src/lib/adminApi.ts`,
-  `src/lib/adminCollection.ts`, `functions/api/admin/upload.ts`,
-  `functions/api/admin/memes.ts`, and `functions/_shared/d1r2.ts`.
-- Confirmed current upload accepts one browser file, trusts the browser MIME
-  prefix, writes directly to R2, returns a key/URL, and does not create a D1
-  record or durable job.
-- Confirmed current Admin list loads the complete corpus and performs filtering
-  and pagination in React.
-- Confirmed no batch endpoint, ingestion worker, `025_` migration, or Phase 4
-  implementation exists.
-- **Status:** Blocked pending explicit authorization to implement the required
-  Phase 1/2 prerequisites together with Phase 4, or to change the phase boundary.
+- No existing schema or configuration was edited. Migration `025` is additive
+  and is not applied to production by this implementation.
+- AI processing expects existing encrypted presets for `judge4` and `judge5`;
+  no credentials or secret values are stored in source or documentation.
+
+### Verification and status
+
+- `npm run build`: passed with the existing Vite chunk-size warning.
+- `npm run test:ingestion`: passed 4/4.
+- `npm run test:analytics`: passed 5/5.
+- `node --test tests/curationConsensus.test.mjs`: passed 9/9.
+- `npx tsc -p tsconfig.functions.json --noEmit`: still reports only the
+  previously recorded baseline Functions errors; no new error was reported for
+  the ingestion files.
+- Local `025` SQL execution and all three new-table PRAGMA checks passed.
+- Remote PRAGMA verification is blocked by missing Cloudflare credentials; no
+  production D1/R2 operation, deployment, or secret-bearing action occurred.
+- **Status:** Completed locally for the approved Phase 4 boundary. Production
+  rollout remains gated on migration `025`, two configured advisory presets,
+  and the existing remote bootstrap decision. Refresh recovery restores all
+  server-side progress; an upload that had not started must be re-selected after
+  a browser refresh because browsers do not persist File objects in localStorage.
 
 ## Admin Overhaul Phase 5 — Meme Vault and data access
 

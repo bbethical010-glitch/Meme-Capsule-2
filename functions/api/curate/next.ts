@@ -16,6 +16,7 @@ import type { PagesFunction } from "../../_shared/pages";
 import { json, handleD1Error, type Env } from "../../_shared/d1r2";
 import { validateSession } from "../../_shared/catAuth";
 import { ensureAIPredictionTable, ensureCurationTables, ensureForceRemovalsTable } from "../../_shared/curateDb";
+import { hasIngestionSchema } from "../../_shared/ingestion";
 
 // In-memory isolate cache for static total memes count
 // Avoids scanning 10,000+ rows on every single swipe
@@ -157,6 +158,13 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       tablesEnsured = true;
     }
 
+    // New intake rows are visible to human judges only after both durable
+    // advisory evaluations have succeeded. Legacy rows without an ingestion
+    // job retain the existing queue behavior during the compatibility window.
+    const ingestionReady = await hasIngestionSchema(env.DB);
+    const intakeJoin = ingestionReady ? "LEFT JOIN ingestion_jobs ij ON m.id = ij.meme_id" : "";
+    const intakeWhere = ingestionReady ? "AND (ij.meme_id IS NULL OR ij.state = 'human_ready')" : "";
+
     const sessionUser = await validateSession(request, env);
     const userId = sessionUser?.id || "user-judge1";
 
@@ -180,7 +188,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       const isCacheExpired = !statsCache || Date.now() > statsCache.expiresAt;
       if (!statsCache || isCacheExpired) {
         try {
-          const totalRes = await env.DB.prepare("SELECT COUNT(1) as cnt FROM memes").first<{ cnt: number }>();
+          const totalRes = await env.DB.prepare(`SELECT COUNT(1) as cnt FROM memes m ${intakeJoin} WHERE 1 = 1 ${intakeWhere}`).first<{ cnt: number }>();
           // 'memes' table already has force-removed items deleted, so no double subtraction
           total = totalRes?.cnt ?? 0;
         } catch {
@@ -266,7 +274,9 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
               ON m.id = mcf.meme_id
             LEFT JOIN ai_curation_predictions ai
               ON m.id = ai.meme_id
+            ${intakeJoin}
             WHERE fr.meme_id IS NULL
+              ${intakeWhere}
               AND c.user_id = ?
               AND c.corpus_status IS NOT NULL
               AND m.uploaded_at < ?
@@ -288,7 +298,9 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
               ON m.id = mcf.meme_id
             LEFT JOIN ai_curation_predictions ai
               ON m.id = ai.meme_id
+            ${intakeJoin}
             WHERE fr.meme_id IS NULL
+              ${intakeWhere}
               AND (${filterCondition})
               AND m.uploaded_at < ?
             ORDER BY m.uploaded_at DESC
@@ -311,7 +323,9 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
             ON m.id = mcf.meme_id
           LEFT JOIN ai_curation_predictions ai
             ON m.id = ai.meme_id
+          ${intakeJoin}
           WHERE fr.meme_id IS NULL
+            ${intakeWhere}
             AND (${filterCondition})
             AND m.uploaded_at > ?
           ORDER BY m.uploaded_at ASC
@@ -334,10 +348,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
          AND c.user_id = ?
         LEFT JOIN meme_curation_final mcf
           ON m.id = mcf.meme_id
-        LEFT JOIN ai_curation_predictions ai
-          ON m.id = ai.meme_id
-        WHERE fr.meme_id IS NULL
-          AND (${filterCondition})
+          LEFT JOIN ai_curation_predictions ai
+            ON m.id = ai.meme_id
+          ${intakeJoin}
+          WHERE fr.meme_id IS NULL
+            ${intakeWhere}
+            AND (${filterCondition})
         ORDER BY m.uploaded_at ASC
         LIMIT ${limit}
       `).bind(userId).all<MemeRow>();

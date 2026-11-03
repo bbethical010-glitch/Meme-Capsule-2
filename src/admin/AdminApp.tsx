@@ -26,6 +26,7 @@ import type { MemeInputMethod, MemeStatus, Rarity } from "../types";
 import SqlRunner from "./sql-runner/SqlRunner";
 import PushNotifications from "./PushNotifications";
 import ScheduledNotifications from "./ScheduledNotifications";
+import BulkIngestionWorkspace from "./BulkIngestionWorkspace";
 import "./admin.css";
 
 type FormState = Omit<AdminMeme, "tags"> & {
@@ -841,6 +842,14 @@ export default function AdminApp() {
             </div>
           ) : (
             <div className={`split-pane ${activeTab === "add" ? "add-meme-layout" : ""}`}>
+              {activeTab === "add" && (
+                <BulkIngestionWorkspace
+                  adminToken={adminToken}
+                  backendMode={backendMode}
+                  onNotice={setNotice}
+                  onBackendChanged={loadBackend}
+                />
+              )}
               {/* LEFT PANE - VAULT */}
               {activeTab === "vault" && <section className="left-pane">
                 <div className="pane-header" style={{ flexDirection: "column", gap: "12px", alignItems: "stretch" }}>

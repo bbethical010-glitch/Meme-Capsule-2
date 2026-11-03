@@ -69,6 +69,7 @@ Meme Capsule operates across three decoupled codebases:
   - Raw SQL query runner with safe execution guards.
   - Reorganized Collection, Curation, and Operations navigation with responsive keyboard-accessible sidebar controls.
   - Meme Vault and Add Memes workspace with local/backend collection editing and CSV/Excel-style JSON exports.
+  - Durable bulk image intake with drag/drop review, stable content IDs, duplicate warnings, server-side image validation, bounded uploads, resumable D1 progress, and retry-only-failed processing.
   - Human Curation, AI Judge Workflow, and Reports / Moderation links to their existing protected workbenches.
   - Push Notifications control room with FCM composer, live Android preview, device stats, target selection, confirmation, and dispatch logs.
   - Scheduled Drops panel with reusable message templates and recurring timezone-aware delivery schedules.
@@ -120,6 +121,11 @@ Admin backend routes:
 - `PATCH /api/admin/memes` - update meme metadata, including safe ID edits
 - `DELETE /api/admin/memes` - archive a meme by setting `status = archived` and `is_active = 0`
 - `POST /api/admin/upload` - upload image/video files to R2
+- `POST /api/admin/ingestion/batches` - create or resume an idempotent bulk image batch
+- `GET /api/admin/ingestion/batches?id=...` - read durable batch, upload, and AI states
+- `POST /api/admin/ingestion/upload` - validate and upload one private intake image
+- `POST /api/admin/ingestion/process` - run bounded Judge 4/5 advisory processing for one item
+- `POST /api/admin/ingestion/retry` - reset selected failed intake jobs
 - `POST /api/admin/notifications/send` - dispatch an FCM notification to active devices, a topic, or a single token
 - `GET /api/admin/notifications/stats` - return registered-device totals and app/platform breakdowns
 - `GET/POST /api/admin/notifications/messages` - list and create reusable notification messages

@@ -15,6 +15,63 @@ type AdminUploadResponse = {
   media_type: AdminMeme["media_type"];
 };
 
+export type IngestionEvaluation = {
+  judge_key: "judge4" | "judge5";
+  provider_key: string | null;
+  model: string | null;
+  state: string;
+  attempt_count: number;
+  decision: string | null;
+  topics: string[];
+  tone: string | null;
+  humour_mechanisms: string[];
+  confidence: number | null;
+  reasoning: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  finished_at: string | null;
+};
+
+export type IngestionItemStatus = {
+  job_id: string;
+  idempotency_key: string;
+  batch_id: string;
+  meme_id: string;
+  original_filename: string;
+  title: string;
+  content_hash: string;
+  byte_size: number;
+  mime_type: string;
+  upload_state: string;
+  state: string;
+  storage_path: string | null;
+  url: string;
+  duplicate_warning: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  attempt_count: number;
+  completed_at: string | null;
+  evaluations: IngestionEvaluation[];
+};
+
+export type IngestionBatchStatus = {
+  batch: {
+    id: string;
+    idempotency_key: string;
+    actor_id: string;
+    actor_name: string | null;
+    status: string;
+    total_items: number;
+    total_bytes: number;
+    ready_items: number;
+    failed_items: number;
+    created_at: string;
+    updated_at: string;
+    completed_at: string | null;
+  };
+  items: IngestionItemStatus[];
+};
+
 const authHeaders = (adminToken: string) => ({
   Authorization: `Bearer ${adminToken}`,
   "X-Admin-Token": adminToken
@@ -112,4 +169,75 @@ export const hardDeleteBackendMemes = async (adminToken: string, ids: string[]) 
   });
   const payload = await parseJsonResponse<{ success: boolean; deletedCount: number; message: string }>(response);
   return payload;
+};
+
+const ingestionHeaders = (adminToken: string, contentType?: string) => ({
+  ...authHeaders(adminToken),
+  ...(contentType ? { "Content-Type": contentType } : {})
+});
+
+export const createIngestionBatch = async (
+  adminToken: string,
+  payload: {
+    idempotency_key: string;
+    items: Array<{
+      idempotency_key: string;
+      meme_id: string;
+      original_filename: string;
+      title: string;
+      content_hash: string;
+      byte_size: number;
+      mime_type: string;
+      media_type: "image";
+    }>;
+  }
+) => {
+  const response = await fetch("/api/admin/ingestion/batches", {
+    method: "POST",
+    headers: ingestionHeaders(adminToken, "application/json"),
+    body: JSON.stringify(payload),
+    cache: "no-store"
+  });
+  return parseJsonResponse<IngestionBatchStatus>(response);
+};
+
+export const getIngestionBatch = async (adminToken: string, batchId: string) => {
+  const response = await fetch(`/api/admin/ingestion/batches?id=${encodeURIComponent(batchId)}`, {
+    headers: ingestionHeaders(adminToken),
+    cache: "no-store"
+  });
+  return parseJsonResponse<IngestionBatchStatus>(response);
+};
+
+export const uploadIngestionItem = async (adminToken: string, batchId: string, jobId: string, file: File) => {
+  const body = new FormData();
+  body.append("batch_id", batchId);
+  body.append("job_id", jobId);
+  body.append("file", file, file.name);
+  const response = await fetch("/api/admin/ingestion/upload", {
+    method: "POST",
+    headers: ingestionHeaders(adminToken),
+    body
+  });
+  return parseJsonResponse<IngestionBatchStatus & { recoverable?: boolean; storage_path?: string }>(response);
+};
+
+export const processIngestionItem = async (adminToken: string, jobId: string) => {
+  const response = await fetch("/api/admin/ingestion/process", {
+    method: "POST",
+    headers: ingestionHeaders(adminToken, "application/json"),
+    body: JSON.stringify({ job_id: jobId }),
+    cache: "no-store"
+  });
+  return parseJsonResponse<IngestionBatchStatus & { busy?: boolean }>(response);
+};
+
+export const retryIngestionItems = async (adminToken: string, jobIds: string[]) => {
+  const response = await fetch("/api/admin/ingestion/retry", {
+    method: "POST",
+    headers: ingestionHeaders(adminToken, "application/json"),
+    body: JSON.stringify({ job_ids: jobIds }),
+    cache: "no-store"
+  });
+  return parseJsonResponse<{ success: boolean; reset_jobs: number; batches: IngestionBatchStatus[] }>(response);
 };

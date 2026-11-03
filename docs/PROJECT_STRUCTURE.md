@@ -1209,7 +1209,6 @@ meme application/
 │   ├── fetch-knowledge.sh
 │   ├── update-knowledge.ps1
 │   └── update-knowledge.sh
-├── .nexus
 ├── .vscode
 │   ├── launch.json
 │   └── settings.json
@@ -1567,7 +1566,8 @@ meme application/
 │   │   ├── 021_create_device_tokens.sql
 │   │   ├── 022_rename_device_tokens_to_notification_tokens.sql
 │   │   ├── 023_scheduled_notifications.sql
-│   │   └── 024_notification_content_files.sql
+│   │   ├── 024_notification_content_files.sql
+│   │   └── 025_durable_meme_ingestion.sql                     # D1 migration 025: durable intake state
 │   ├── schema.sql                                    # SQLite schema for meme metadata
 │   └── seed.sql
 ├── docs                                              # Dedicated project documentation folder
@@ -1575,8 +1575,6 @@ meme application/
 │   │   ├── AI-SPEC.md
 │   │   ├── Multi-Judge Majority Consensus — curate Implementation Prompt.md
 │   │   └── ROADMAP.md                                # Phase-by-phase development plan
-│   ├── superpowers
-│   │   └── plans
 │   ├── ADMIN_OVERHAUL_AUDIT.md
 │   ├── AGENT_RULES.md
 │   ├── AGENTS.md
@@ -1621,6 +1619,7 @@ meme application/
 │   │   ├── fallbackMemes.ts                          # Static fallback memes for offline/empty DB
 │   │   ├── fcmAuth.ts
 │   │   ├── forceRemove.ts
+│   │   ├── ingestion.ts
 │   │   ├── liveAnalytics.ts
 │   │   └── pages.ts                                  # Cloudflare Pages type definitions
 │   ├── api                                           # API route handlers
@@ -1636,6 +1635,11 @@ meme application/
 │   │   │   │   ├── recalculate.ts
 │   │   │   │   ├── reset.ts
 │   │   │   │   └── trends.ts
+│   │   │   ├── ingestion                             # Durable bulk meme intake API routes
+│   │   │   │   ├── batches.ts                        # Create/read idempotent ingestion batches
+│   │   │   │   ├── process.ts                        # Run bounded Judge 4/5 advisory processing
+│   │   │   │   ├── retry.ts
+│   │   │   │   └── upload.ts                         # POST /api/admin/upload
 │   │   │   ├── memes
 │   │   │   │   └── hard-delete.ts
 │   │   │   ├── notifications
@@ -1648,6 +1652,7 @@ meme application/
 │   │   │   ├── ai-comparison.ts
 │   │   │   ├── ai-stats.ts
 │   │   │   ├── memes.ts                              # GET/POST/PATCH/DELETE /api/admin/memes
+│   │   │   ├── rebalance-random-keys.ts
 │   │   │   ├── send-push.ts
 │   │   │   ├── sql.ts
 │   │   │   ├── sync-r2.ts                            # POST /api/admin/sync-r2 (R2→D1 sync)
@@ -1742,6 +1747,8 @@ meme application/
 │   │   ├── admin.css                                 # Admin-specific styles
 │   │   ├── AdminApp.tsx                              # Admin UI component
 │   │   ├── AdminGate.tsx
+│   │   ├── bulkIngestion.ts                          # Bulk intake validation and content hashing
+│   │   ├── BulkIngestionWorkspace.tsx                     # Admin durable bulk image intake UI
 │   │   ├── PushNotifications.tsx
 │   │   └── ScheduledNotifications.tsx
 │   ├── ai-judge
@@ -1812,6 +1819,7 @@ meme application/
 │   └── vite-env.d.ts                                 # Vite environment type augmentation
 ├── tests
 │   ├── analytics.test.ts
+│   ├── bulkIngestion.test.ts
 │   └── curationConsensus.test.mjs
 ├── workers
 │   ├── analyticsAggregator.ts

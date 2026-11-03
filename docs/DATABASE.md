@@ -2,7 +2,7 @@
 
 ## Current Storage
 
-The project uses Cloudflare R2 + D1 as its production edge database and storage layer. The repository now includes additive migrations through `018`, including Android analytics schema versioning, query indexes, and deletion auditing; apply them to each D1 environment before deploying code that uses those features.
+The project uses Cloudflare R2 + D1 as its production edge database and storage layer. The repository includes additive migrations through `025`, including Android analytics, notifications, and durable bulk-ingestion state; apply each migration to every D1 environment before deploying code that uses its tables.
 
 Current storage layers:
 
@@ -12,6 +12,8 @@ Current storage layers:
 - `functions/api/random-meme.ts` and `functions/api/daily-meme.ts`: Cloudflare Pages Functions that query D1 when bindings exist and fall back safely when they do not.
 - `functions/api/admin/memes.ts`: admin metadata API for listing, creating, updating, and archiving memes via D1.
 - `functions/api/admin/upload.ts`: admin upload API for sending files to Cloudflare R2.
+- `functions/api/admin/ingestion/`: authenticated batch creation, image upload,
+  advisory processing, retry, and status APIs for durable bulk intake.
 - Legacy Admin analytics tables and endpoints remain backend-compatible after the Phase 3 Admin Analytics UI retirement; Android telemetry tables, notification tables, and their workers are not removed by that UI change.
 
 Local admin changes sync to the public app only in the same browser. This is useful for review, but it is not global production sync.
@@ -171,6 +173,55 @@ permanently in R2. A schedule may reference one file; the Worker randomly
 selects one entry at delivery time, while retaining the schedule's message as
 the fallback.
 
+### Durable Bulk Ingestion Tables (Migration 025)
+
+Migration `025_durable_meme_ingestion.sql` adds three additive tables for the
+Admin bulk intake flow. They remain separate from publication and human
+consensus records.
+
+#### `ingestion_batches`
+
+- `id` and unique `idempotency_key` identify a retry-safe batch.
+- `actor_id` / `actor_name` retain bounded operator attribution.
+- `status` is `queued`, `processing`, `partial`, `complete`, `failed`, or
+  `cancelled`.
+- `total_items`, `total_bytes`, `ready_items`, and `failed_items` expose durable
+  progress, with ISO `created_at`, `updated_at`, and `completed_at` timestamps.
+
+#### `ingestion_jobs`
+
+One row represents each selected file. Stable item idempotency keys, generated
+intake IDs, content hashes, filenames, titles, byte sizes, and MIME types keep
+retries consistent. `upload_state` tracks `pending`, `uploading`, `uploaded`, or
+`failed`; `state` tracks `queued`, `processing`, `retry_wait`, `failed`, or
+`human_ready`. Lease owner/expiry, attempt count, bounded error fields, and
+`next_attempt_at` make interrupted work recoverable. `meme_id` is intentionally
+not a foreign key because the job exists before its R2 upload creates the
+private `memes` row.
+
+#### `ingestion_ai_evaluations`
+
+Each job receives independent `judge4` and `judge5` rows. They persist provider
+model, validated decision/taxonomy, confidence, reasoning, bounded result JSON,
+lease/retry state, and errors. A job reaches `human_ready` only after both rows
+are `succeeded`. These rows are advisory only: they never become
+`meme_curation` ballots and never write `meme_curation_final`.
+
+#### Intake invariants
+
+- New intake metadata is inserted into `memes` as `status = 'archived'` and
+  `is_active = 0` only after the R2 object is stored.
+- The first release accepts PNG, JPEG, GIF, WebP, and AVIF images only. The
+  server enforces a 20 MiB per-file limit, 50 items per batch, and 200 MiB total
+  descriptor limit; video is rejected.
+- Duplicate batch/item requests reuse their idempotency records. R2-success/D1
+  failure remains retryable and does not publish the item.
+- Curation queue routes retain legacy behavior for rows without an ingestion
+  job, while new jobs remain hidden until `human_ready`.
+- AI completion cannot activate a meme or create a final keep. Existing public
+  delivery still requires the final human `keep` record and active/status
+  conditions.
+
 ## API Flow
 
 Public random meme:
@@ -225,6 +276,15 @@ Routes:
 - `PATCH /api/admin/memes`: updates one metadata row; pass `originalId` when changing an ID.
 - `DELETE /api/admin/memes`: archives one metadata row instead of hard deleting.
 - `POST /api/admin/upload`: uploads one image/video file to R2 and returns `storage_path` plus public URL.
+- `POST /api/admin/ingestion/batches`: validates and creates or resumes an
+  idempotent durable image batch.
+- `GET /api/admin/ingestion/batches?id=...`: reads persisted batch/item and
+  Judge 4/5 evaluation state.
+- `POST /api/admin/ingestion/upload`: validates one image's bytes/hash, writes a
+  unique R2 object, and creates private archived metadata.
+- `POST /api/admin/ingestion/process`: performs one bounded advisory processing
+  attempt for an uploaded item.
+- `POST /api/admin/ingestion/retry`: resets only selected failed items.
 
 ## Report moderation
 
