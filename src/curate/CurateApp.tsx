@@ -113,15 +113,16 @@ export default function CurateApp() {
     setNote(noteText);
   }, []);
 
+  // Ref to decouple AI loop from human approval voting (prevents AI from writing human ballots)
+  const aiAdvanceRef = useRef<() => Promise<CurateMemeItem | null>>(async () => null);
+
   const aiLoop = useAiJudgeLoop({
     currentMeme,
     config: aiConfig,
     onApplyDecision: handleApplyAiDecision,
-    onAdvance: async (decision?: AiJudgeDecision) => {
-      const memeId = stateRef.current.currentMeme?.id;
-      if (!memeId) return null;
-      const nextMeme = await handleApproveAndAdvance("manual", undefined, decision);
-      return nextMeme;
+    onAdvance: async () => {
+      // Bug 1 fix: AI loop is strictly advisory and NEVER calls handleApproveAndAdvance or approveCuration.
+      return aiAdvanceRef.current();
     }
   });
 
@@ -436,6 +437,90 @@ export default function CurateApp() {
       }
     }
   }, [applyMemeToForm, filterQueue, refillPrefetchQueue]);
+
+  // Bug 1 fix: Dedicated advisory advance handler that never casts human votes
+  const handleAiAdvisoryAdvance = useCallback(async (): Promise<CurateMemeItem | null> => {
+    const currIdx = historyIndexRef.current;
+    setReCuratingMemeId(null);
+    if (currIdx < historyStackRef.current.length - 1) {
+      const newIdx = currIdx + 1;
+      setHistoryIndex(newIdx);
+      historyIndexRef.current = newIdx;
+      const entry = historyStackRef.current[newIdx];
+      setCurrentMeme(entry.meme);
+      applyMemeToForm(entry.meme, entry);
+      return entry.meme;
+    }
+
+    if (prefetchQueueRef.current.length > 0) {
+      const nextMeme = prefetchQueueRef.current.shift()!;
+      setCurrentMeme(nextMeme);
+      applyMemeToForm(nextMeme);
+
+      const newEntry: HistoryEntry = {
+        meme: nextMeme,
+        status: nextMeme.curation?.corpus_status || null,
+        topics: nextMeme.curation?.topics || [],
+        tone: nextMeme.curation?.tone || null,
+        mechanisms: nextMeme.curation?.humour_mechanisms || [],
+        duplicateOf: nextMeme.curation?.duplicate_of || "",
+        note: nextMeme.curation?.curator_note || "",
+        overrideMode: false,
+      };
+      historyStackRef.current.push(newEntry);
+      const newIdx = historyStackRef.current.length - 1;
+      setHistoryIndex(newIdx);
+      historyIndexRef.current = newIdx;
+
+      if (prefetchQueueRef.current.length <= 2) {
+        refillPrefetchQueue(nextMeme.id);
+      }
+      return nextMeme;
+    } else {
+      setLoading(true);
+      try {
+        const currentId = stateRef.current.currentMeme?.id;
+        const res = await fetchNextMeme(filterQueue, currentId, "next", false, 4);
+        const incoming = (res.memes && res.memes.length > 0) ? res.memes : (res.meme ? [res.meme] : []);
+        if (incoming.length > 0) {
+          const nextMeme = incoming[0];
+          setCurrentMeme(nextMeme);
+          applyMemeToForm(nextMeme);
+          preloadImage(nextMeme.image_url);
+
+          const newEntry: HistoryEntry = {
+            meme: nextMeme,
+            status: nextMeme.curation?.corpus_status || null,
+            topics: nextMeme.curation?.topics || [],
+            tone: nextMeme.curation?.tone || null,
+            mechanisms: nextMeme.curation?.humour_mechanisms || [],
+            duplicateOf: nextMeme.curation?.duplicate_of || "",
+            note: "",
+            overrideMode: false,
+          };
+          historyStackRef.current.push(newEntry);
+          const newIdx = historyStackRef.current.length - 1;
+          setHistoryIndex(newIdx);
+          historyIndexRef.current = newIdx;
+
+          for (const m of incoming.slice(1)) {
+            preloadImage(m.image_url);
+            prefetchQueueRef.current.push(m);
+          }
+          return nextMeme;
+        } else {
+          setToast({ message: "No more memes in this queue", type: "warning" });
+          return null;
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
+  }, [applyMemeToForm, filterQueue, refillPrefetchQueue]);
+
+  useEffect(() => {
+    aiAdvanceRef.current = handleAiAdvisoryAdvance;
+  }, [handleAiAdvisoryAdvance]);
 
   // Jump directly to the latest unreviewed meme
   const handleJumpToUnreviewed = useCallback(async () => {
