@@ -243,3 +243,19 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
 - Local migration execution, schema PRAGMA checks, frontend build, ingestion
   tests, analytics tests, and consensus tests passed. Remote PRAGMA verification
   and production migration remain blocked by missing Cloudflare credentials.
+
+
+---
+
+## 10. Admin Overhaul Phase 5 — Meme Vault & 5 View Modes (November 3, 2026)
+
+- Added server-side query parameter processing (`page`, `per_page` clamped 1-100, `q`/`search`, `status`, `sort_by`, `sort_dir`, and `all`) to `GET /api/admin/memes`.
+- Replaced client-side corpus loading with single-query D1 aggregation computing top-level corpus statistics (`total`, `active`, `drafts`, `excluded`, `archived`, `nsfw`).
+- Enforced immutable normal IDs in `PATCH /api/admin/memes` with HTTP 400 rejection on ID mismatch to protect foreign keys across `meme_curation`, `meme_curation_final`, `meme_force_removals`, and `ingestion_jobs`.
+- Exported `fetchVaultMemes` in `src/lib/adminApi.ts` with typed pagination, stats, and query parameters.
+- Implemented **Five Vault View Modes** with persistent `localStorage` preference (`rows`, `compact`, `grid`, `table`, `split`) in `/admin`.
+- Added **Contextual Details Panel (Inspector)** displaying media preview, immutable ID copy, 2-tier lifecycle status, NSFW safety toggle, metadata badges, and actions.
+- Locked ID field in edit form for existing memes (`editingOriginalId`).
+- Added transparent partial bulk-action reporting for permanent deletions (`Processed X: Y succeeded, Z failed`).
+- Added unit test suite `tests/vault.test.ts` (5/5 passed) with `npm run test:vault` script.
+- Verified build and all 4 test suites: `npm run build`, `npm run test:vault`, `npm run test:ingestion`, `npm run test:analytics`, and `node --test tests/curationConsensus.test.mjs`.
