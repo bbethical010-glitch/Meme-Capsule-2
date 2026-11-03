@@ -1,4 +1,241 @@
-# AI-Judgement Review Workflow Walkthrough
+# Meme Capsule — Implementation Walkthrough and Phase History
+
+> **History scope:** This document records the Admin Overhaul plan's Phases 0–7.
+> It also preserves the older Android analytics and curation verification notes
+> that were already present in this file. Those similarly named analytics phases
+> are separate from the Admin Overhaul phase numbers.
+>
+> **Last updated:** 2026-11-03 07:48:55 +05:30
+
+## Source-of-truth and current branch state
+
+- The complete Admin Overhaul Phase 0–7 plan is available in the governing task
+  instructions and is reproduced in verified scope form below. The Phase 0 audit
+  is `docs/ADMIN_OVERHAUL_AUDIT.md`.
+- The workspace was synchronized with `origin/main`, which advanced from
+  `2cafbe8d...` to `7c32bda` during the Phase 4 start check. The remote change is
+  the unrelated random-meme repetition/rebalancing work in
+  `functions/_shared/d1r2.ts`, `functions/api/random-meme.ts`,
+  `functions/api/admin/rebalance-random-keys.ts`, and related documentation.
+- Existing local work was preserved through the fast-forward. The tracked root
+  `AGENT_RULES.md` deletion remains pre-existing workspace state; the complete
+  canonical `docs/AGENT_RULES.md` was read before this phase work.
+- No production deployment, migration, R2 deletion, or secret-bearing operation
+  was performed during the Phase 4 groundwork.
+
+## Admin Overhaul Phase 0 — Audit and scope lock
+
+### Objective
+
+Audit the current Admin Console, curation, AI, public delivery, authentication,
+R2/D1 operations, migration history, and documentation before any schema or
+behavior change.
+
+### Verified implementation details
+
+- Read the repository rules, project context, current state, database references,
+  migration inventory, API/UI entry points, worker code, and existing tests.
+- Confirmed `main` was synchronized with `origin/main` at the original audit
+  baseline before Phase 3 work.
+- Confirmed intentional duplicate migration prefixes `004`, `011`, and `021`,
+  migration history through `024`, and no existing `025_` migration.
+- Mapped the distinct AI stores (`ai_curation_predictions`,
+  `ai_judge_processed`, and legacy `memes.ai_*` contracts), human consensus,
+  public final-`keep` gating, R2/D1 operations, and Android/notification systems.
+- Recorded the current governance concern: the continuous browser AI loop can
+  invoke the human approval endpoint, while the approved architecture requires
+  AI to remain advisory.
+- Recorded the clean local migration-chain failure at historical migration 008
+  because `ai_curation_predictions` is not created before its index.
+
+### Files and records
+
+- `docs/ADMIN_OVERHAUL_AUDIT.md`: complete audit, dependency map, candidate
+  schema/state design, compatibility strategy, required checks, and blockers.
+- Existing repository rules, database docs, state docs, migration files, API
+  routes, workers, and test files were inspected without functional changes.
+
+### Verification and status
+
+- `git fetch origin`: passed at audit time.
+- Frontend build, analytics tests, and consensus tests passed at the audit
+  baseline; Functions typecheck and clean local migration apply exposed recorded
+  pre-existing failures.
+- **Status:** Completed as an audit. Production behavior and schema were not
+  changed in Phase 0.
+
+## Admin Overhaul Phase 1 — Durable ingestion state
+
+### Objective and planned implementation
+
+Introduce a unique `025_` migration and durable batch/item/evaluation state
+without overloading `memes.status`. The planned states are batch/item queued,
+processing, retry-wait, failed, and human-ready, with idempotency, leases,
+bounded errors, independent AI evaluation records, and an optional media
+operation saga.
+
+### Verified history and status
+
+- No `025_` migration, ingestion batch/job table, ingestion worker, or ingestion
+  API exists in the current repository.
+- The Phase 0 audit contains the candidate schema and indexes, but it is a
+  proposal rather than an applied implementation.
+- The clean migration bootstrap issue and remote migration-history access remain
+  unresolved.
+- **Status:** Held/pending. No Phase 1 implementation has been performed.
+
+## Admin Overhaul Phase 2 — AI preprocessing and human-ready gating
+
+### Objective and planned implementation
+
+Require both configured advisory AI evaluations to persist successfully before a
+new intake item becomes eligible for human curation. The planned worker must
+claim/recover jobs, retry bounded transient failures, validate structured output,
+persist results, and never write human ballots or call human approval endpoints.
+New items remain archived and inactive; legacy items without ingestion jobs retain
+legacy queue behavior.
+
+### Verified history and status
+
+- No durable intake AI worker or `human_ready` gate exists in the current code.
+- Current AI Judge and `/curate` paths remain the pre-existing separate systems
+  documented in the audit; they were not converted into the Phase 2 pipeline.
+- **Status:** Held/pending. No Phase 2 implementation has been performed.
+
+## Admin Overhaul Phase 3 — Navigation and retired Admin views
+
+- Reorganized `/admin` into Collection, Curation, and Operations groups while
+  retaining the Neo-Brutalist visual system.
+- Added an accessible desktop collapse/icon-rail control with hover/focus
+  expansion, a pin/toggle control, keyboard focus states, and a mobile drawer
+  with an overlay close action.
+- Added direct navigation from the Admin Console to Human Curation (`/curate`),
+  AI Judge Workflow (`/ai-judge`), and Reports / Moderation (`/reports`).
+- Retired the Admin Analytics and legacy Admin AI Categorisation React views and
+  deleted their exclusive frontend modules. Legacy Admin analytics/AI backend
+  endpoints, Android telemetry, notification APIs/workers, `/categorise`, and
+  the separate `/ai-judge` workflow remain preserved.
+- No database migration or schema change was made in this phase.
+- Verification: `npm run build` passed with the existing Vite chunk-size warning;
+  `npm run test:analytics` passed 5/5; `node --test
+  tests/curationConsensus.test.mjs` passed 9/9; targeted source-reference and
+  documentation checks found no remaining Admin Analytics or legacy Admin AI UI
+  imports.
+
+### Phase 3 implementation record
+
+- `src/admin/AdminApp.tsx`: grouped Collection/Curation/Operations navigation,
+  direct links to `/curate`, `/ai-judge`, and `/reports`, accessible menu state,
+  and Add Memes routing.
+- `src/admin/admin.css`: responsive mobile drawer/backdrop, desktop collapse/icon
+  rail, hover/focus expansion, labels/tooltips, and keyboard focus styling.
+- Deleted exclusive frontend modules under `src/admin/ai/` and
+  `src/admin/analytics-dashboard/`.
+- Updated `docs/ADMIN_OVERHAUL_AUDIT.md`, `docs/DATABASE.md`, `docs/GEMINI.md`,
+  `docs/PROJECT_STRUCTURE.md`, `docs/README.md`, `docs/README_ANALYTICS.md`,
+  `docs/STATE.md`, and this walkthrough. Backend analytics, Android telemetry,
+  notification workers, `/categorise`, `/curate`, and `/ai-judge` were retained.
+- **Status:** Completed locally; no migration or production deployment.
+
+## Admin Overhaul Phase 4 — Bulk Add Memes workspace
+
+### Objective and exact scope from the approved plan
+
+Provide reliable, resumable bulk image ingestion in the Admin Console:
+
+1. Multi-select and drag/drop image intake.
+2. Review grid/table with thumbnails, filenames, generated stable IDs, editable
+   titles, size/type, duplicate warnings, and validation state.
+3. Remove files before submission.
+4. Client and server validation; first release rejects video clearly.
+5. Confirm the batch and upload with bounded concurrency.
+6. Create draft metadata and durable ingestion jobs idempotently.
+7. Show per-file upload and AI-processing state.
+8. Retry only failed items and preserve progress across refreshes.
+9. Use unique R2 keys, server-side type/size/count limits, content hashes where
+   feasible, stable retry identities, and recoverable R2-success/D1-failure
+   handling.
+10. Never publish, create a final keep, set `is_active = 1`, or create a human
+    ballot as a side effect of upload.
+
+### Dependency and blocker identified before implementation
+
+Phase 4's required server-side behavior depends on the Phase 1 durable
+`ingestion_batches`/`ingestion_jobs` model and Phase 2 AI processing/readiness
+contract. Both phases are currently held by explicit prior operator direction and
+have not been implemented. The current repository still has only single-file R2
+upload plus separate one-row metadata creation; it has no durable batch/job API,
+retry state, or worker-backed AI status. Implementing the complete Phase 4
+acceptance criteria without those prerequisites would require silently starting
+Phase 1/2 schema and behavior work, which would violate the phase boundary.
+
+### Current groundwork verification
+
+- Confirmed the full Phase 4 requirements from the original plan and
+  `docs/ADMIN_OVERHAUL_AUDIT.md`; no material Phase 4 requirement is missing or
+  ambiguous.
+- Confirmed current files: `src/admin/AdminApp.tsx`, `src/lib/adminApi.ts`,
+  `src/lib/adminCollection.ts`, `functions/api/admin/upload.ts`,
+  `functions/api/admin/memes.ts`, and `functions/_shared/d1r2.ts`.
+- Confirmed current upload accepts one browser file, trusts the browser MIME
+  prefix, writes directly to R2, returns a key/URL, and does not create a D1
+  record or durable job.
+- Confirmed current Admin list loads the complete corpus and performs filtering
+  and pagination in React.
+- Confirmed no batch endpoint, ingestion worker, `025_` migration, or Phase 4
+  implementation exists.
+- **Status:** Blocked pending explicit authorization to implement the required
+  Phase 1/2 prerequisites together with Phase 4, or to change the phase boundary.
+
+## Admin Overhaul Phase 5 — Meme Vault and data access
+
+### Objective and planned scope
+
+Add server-side search/filtering/pagination and stable ordering, five Vault view
+modes, contextual details panel, immutable normal IDs, explicit lifecycle/curation
+semantics, and visible partial bulk-action results without weakening the public
+final-`keep` gate.
+
+### Verified history and status
+
+- The current Admin Vault still loads all returned rows and filters/slices them in
+  React; no Phase 5 server-side contract or five-mode Vault implementation is
+  present.
+- **Status:** Pending; not started.
+
+## Admin Overhaul Phase 6 — Human-judge image editor
+
+### Objective and planned scope
+
+Prototype a lazy-loaded Konva + React-Konva still-image editor for Judges 1–3
+with crop/rotate, drawing, shapes, text, actual blur/mosaic, undo/redo,
+preview/reset, and source-resolution export. Save must use a durable R2/D1
+compare-and-swap media replacement saga with unique keys, revision checks, audit
+records, and retryable cleanup. Editing must remain separate from votes.
+
+### Verified history and status
+
+- No image-editor dependency, editor route, media-operation migration, revision
+  endpoint, or canonical replacement saga exists in the current repository.
+- Existing destructive R2/D1 hazards are documented in the Phase 0 audit and have
+  not been changed by this walkthrough task.
+- **Status:** Pending; not started.
+
+## Admin Overhaul Phase 7 — End-to-end verification and rollout
+
+### Objective and planned scope
+
+Run publication/curation, AI reliability, ingestion/recovery, Admin UI/access,
+R2/D1, Android telemetry, notification, and editor regression checks; verify local
+and staging behavior; document rollout/rollback; and only deploy with explicit
+authorization.
+
+### Verified history and status
+
+- Existing analytics and curation tests document earlier subsystem verification,
+  but the Admin Overhaul Phase 7 acceptance suite has not been created or run.
+- No Admin Overhaul production migration or deployment has occurred.
+- **Status:** Pending until Phases 1–6 are implemented and verified.
 
 ## Android Analytics Phase 1 Contract Freeze
 

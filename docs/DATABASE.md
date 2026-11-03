@@ -12,6 +12,7 @@ Current storage layers:
 - `functions/api/random-meme.ts` and `functions/api/daily-meme.ts`: Cloudflare Pages Functions that query D1 when bindings exist and fall back safely when they do not.
 - `functions/api/admin/memes.ts`: admin metadata API for listing, creating, updating, and archiving memes via D1.
 - `functions/api/admin/upload.ts`: admin upload API for sending files to Cloudflare R2.
+- Legacy Admin analytics tables and endpoints remain backend-compatible after the Phase 3 Admin Analytics UI retirement; Android telemetry tables, notification tables, and their workers are not removed by that UI change.
 
 Local admin changes sync to the public app only in the same browser. This is useful for review, but it is not global production sync.
 

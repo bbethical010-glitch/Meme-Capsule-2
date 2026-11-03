@@ -67,10 +67,13 @@ Meme Capsule operates across three decoupled codebases:
 - **Admin Dashboard (`/admin`)**:
   - Cloudflare D1 database management and R2 storage sync.
   - Raw SQL query runner with safe execution guards.
-  - Event telemetry recalculation engine and CSV/Excel exports.
+  - Reorganized Collection, Curation, and Operations navigation with responsive keyboard-accessible sidebar controls.
+  - Meme Vault and Add Memes workspace with local/backend collection editing and CSV/Excel-style JSON exports.
+  - Human Curation, AI Judge Workflow, and Reports / Moderation links to their existing protected workbenches.
   - Push Notifications control room with FCM composer, live Android preview, device stats, target selection, confirmation, and dispatch logs.
   - Scheduled Drops panel with reusable message templates and recurring timezone-aware delivery schedules.
   - Permanent JSON/CSV/TXT content-library upload with random message selection and per-schedule delete controls. Catalog TXT files may use section headings, numbered entries, and two lines per entry.
+- The retired Admin Analytics and legacy Admin AI Categorisation views are no longer mounted in `/admin`. Their backend endpoints remain available for retained workers, external producers, or compatibility until separately deprecated.
 - **Moderation Dashboard (`/reports`)**:
   - Token-protected review interface for user-reported content.
   - One-click meme archiving and addition to `content_blacklist`.
@@ -78,7 +81,7 @@ Meme Capsule operates across three decoupled codebases:
   - `GET /api/random-meme` & `GET /api/daily-meme` (dual-source delivery with fallback).
   - `POST /api/events` (telemetry queue flusher).
   - `POST /api/report` (user safety reporting).
-  - Admin analytics endpoints (`/api/admin/analytics/*`).
+  - Retained legacy Admin analytics endpoints (`/api/admin/analytics/*`) without an Admin UI tab.
   - `POST /api/admin/notifications/send` and `GET /api/admin/notifications/stats` (protected FCM HTTP v1 dispatch and device metrics).
 
 ## Admin Dashboard
