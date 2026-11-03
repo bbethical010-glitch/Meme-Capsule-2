@@ -272,3 +272,21 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
 - **Transparent Hard Delete Reporting**:
   - `functions/api/admin/memes/hard-delete.ts` checks both `env.MEMES_BUCKET` and `env.R2_BUCKET` bindings and returns structured results reporting deleted count, affected IDs, and any per-item R2 deletion errors.
 - **Verification**: `npm run test:vault` (5/5 tests passing), `npm run test:ingestion` (4/4 tests passing), `npm run test:analytics` (5/5 tests passing), `node --test tests/curationConsensus.test.mjs` (9/9 tests passing), and `npm run build` pass with 0 errors.
+
+---
+
+## 11. Phase 0.5 — Pre-Flight Verification & Advisory Boundary Security Fix (November 3, 2026)
+
+- **Bug 1 Resolved (AI Loop Advisory Boundary Enforcement)**:
+  - Verified that `useAiJudgeLoop` in `src/curate/CurateApp.tsx` was previously wired to `onAdvance: async (decision) => handleApproveAndAdvance("manual", undefined, decision)`, which caused background AI processing to submit votes through `/api/curate/approve` and forge human ballots under the logged-in curator's identity in `meme_curation`.
+  - Severed the link: implemented `handleAiAdvisoryAdvance` via `aiAdvanceRef` which cleanly advances the queue pointer and buffers the next meme without ever calling `approveCuration`, `handleApproveAndAdvance`, or modifying `meme_curation`.
+  - Human curators retain full ability to manually adopt AI recommendations via the explicit "ADOPT J4" (`4`) or "ADOPT J5" (`5`) actions.
+- **Bug 2 Resolved (Local Migration 008 Bootstrap)**:
+  - Verified that running `npx wrangler d1 migrations apply meme-capsule-db --local` failed at `008_optimize_curation_indexes.sql` with `SQLITE_ERROR: no such table: main.ai_curation_predictions`.
+  - Resolved via new additive migration `007b_create_ai_curation_predictions.sql` (sorting immediately before `008` in Wrangler without editing historical migration `008`), creating `ai_curation_predictions` and `ai_cat_decisions` tables with `IF NOT EXISTS`.
+  - Successfully executed local migration chain through `025_durable_meme_ingestion.sql`.
+  - Physically verified the schema with `PRAGMA table_info(ingestion_batches)`, `PRAGMA table_info(ingestion_jobs)`, and `PRAGMA table_info(ingestion_ai_evaluations)`.
+- **Git Coordination & Sync**:
+  - Rebased cleanly over merged PR #51 (`1dc0845`) and pushed commit `4e35bfe` to `origin/main`.
+- **Verification**: `npm run build` passed with zero errors; all 23 unit tests passed across `test:vault`, `test:ingestion`, `test:analytics`, and `curationConsensus`.
+
