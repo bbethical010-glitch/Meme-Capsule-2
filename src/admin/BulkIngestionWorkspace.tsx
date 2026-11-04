@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createIngestionBatch,
+  deleteIngestionBatch,
   getIngestionBatch,
   processIngestionItem,
   retryIngestionItems,
@@ -21,7 +22,8 @@ import {
 } from "./bulkIngestion";
 
 const SESSION_KEY = "meme-capsule:admin-ingestion-session";
-const MAX_CONCURRENCY = 3;
+const UPLOAD_CONCURRENCY = 6;
+const AI_CONCURRENCY = 3;
 
 const formatSpeed = (bytesPerSec: number) => {
   if (bytesPerSec <= 0 || !Number.isFinite(bytesPerSec)) return "0 KB/s";
@@ -59,20 +61,20 @@ const readPersistedSession = (): PersistedSession | null => {
 
 const statusForItem = (item: BulkDraftItem) => {
   if (!item.server) return "READY TO UPLOAD";
-  if (item.server.state === "human_ready") return "HUMAN READY";
+  if (item.server.state === "human_ready") return "HUMAN READY (ARCHIVED)";
   if (item.server.upload_state === "failed") return "UPLOAD FAILED";
-  if (item.server.upload_state !== "uploaded") return "WAITING FOR UPLOAD";
-  if (item.server.state === "processing") return "AI PROCESSING";
+  if (item.server.upload_state !== "uploaded") return "UPLOADING...";
+  if (item.server.state === "processing") return "AI PREPROCESSING";
   if (item.server.state === "retry_wait") return "RETRY WAITING";
   if (item.server.state === "failed") return "AI FAILED";
-  return "UPLOADED / QUEUED";
+  return "UPLOADED (DRAFT)";
 };
 
 const statusClass = (item: BulkDraftItem) => {
   const status = statusForItem(item);
-  if (status === "HUMAN READY") return "ready";
+  if (status.includes("READY")) return "ready";
   if (status.includes("FAILED")) return "failed";
-  if (status.includes("PROCESSING")) return "processing";
+  if (status.includes("PROCESSING") || status.includes("UPLOADING")) return "processing";
   return "queued";
 };
 
@@ -89,7 +91,7 @@ const mergeServerStatus = (items: BulkDraftItem[], status: IngestionBatchStatus)
       : item;
   });
 
-const runBounded = async <T,>(values: T[], worker: (value: T) => Promise<void>) => {
+const runBounded = async <T,>(values: T[], worker: (value: T) => Promise<void>, concurrency = 4) => {
   let cursor = 0;
   const runWorker = async () => {
     while (cursor < values.length) {
@@ -97,7 +99,7 @@ const runBounded = async <T,>(values: T[], worker: (value: T) => Promise<void>) 
       await worker(value);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENCY, values.length) }, runWorker));
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, runWorker));
 };
 
 export default function BulkIngestionWorkspace({
@@ -130,7 +132,9 @@ export default function BulkIngestionWorkspace({
   const completedUploadBytesRef = useRef<number>(0);
   const uploadStartTimeRef = useRef<number>(0);
   const totalTargetBytesRef = useRef<number>(0);
+  const smoothedSpeedRef = useRef<number>(0);
   const itemsRef = useRef(items);
+  const batchStatusRef = useRef<IngestionBatchStatus | null>(null);
 
   const submitted = Boolean(batchId);
   const totalBytes = useMemo(() => totalDraftBytes(items), [items]);
@@ -162,6 +166,7 @@ export default function BulkIngestionWorkspace({
   }, []);
 
   const applyStatus = useCallback((status: IngestionBatchStatus) => {
+    batchStatusRef.current = status;
     setBatchStatus(status);
     setItems((current) => mergeServerStatus(current, status));
   }, []);
@@ -224,9 +229,10 @@ export default function BulkIngestionWorkspace({
         onNotice(`Select at most ${pending.length} pending file${pending.length === 1 ? "" : "s"} for this batch.`);
       }
       nextItems = [...items];
-      for (const [index, file] of selected.slice(0, pending.length).entries()) {
+      const targetFiles = selected.slice(0, pending.length);
+      const drafts = await Promise.all(targetFiles.map((file) => createBulkDraftItem(file)));
+      for (const [index, draft] of drafts.entries()) {
         const target = pending[index];
-        const draft = await createBulkDraftItem(file);
         if (draft.previewUrl && target.previewUrl) URL.revokeObjectURL(target.previewUrl);
         const replacement: BulkDraftItem = {
           ...draft,
@@ -245,8 +251,9 @@ export default function BulkIngestionWorkspace({
         onNotice(`A batch can contain at most ${BULK_MAX_ITEMS} images.`);
       }
       nextItems = [...items];
-      for (const file of selected.slice(0, Math.max(0, availableSlots))) {
-        const draft = await createBulkDraftItem(file);
+      const targetFiles = selected.slice(0, Math.max(0, availableSlots));
+      const drafts = await Promise.all(targetFiles.map((file) => createBulkDraftItem(file)));
+      for (const draft of drafts) {
         if (nextItems.some((item) => item.contentHash === draft.contentHash)) {
           URL.revokeObjectURL(draft.previewUrl);
           continue;
@@ -278,7 +285,7 @@ export default function BulkIngestionWorkspace({
     });
   };
 
-  const syncOne = useCallback(async (statusItem: IngestionItemStatus, currentItems: BulkDraftItem[]) => {
+  const uploadOne = useCallback(async (statusItem: IngestionItemStatus, currentItems: BulkDraftItem[]) => {
     let currentStatus: IngestionBatchStatus | null = null;
     const local = currentItems.find((item) => item.clientItemId === statusItem.idempotency_key);
     if (statusItem.upload_state !== "uploaded") {
@@ -297,13 +304,15 @@ export default function BulkIngestionWorkspace({
           activeUploadBytesRef.current.forEach((val) => { activeBytes += val; });
           const totalLoaded = completedUploadBytesRef.current + activeBytes;
           const elapsedSec = Math.max(0.2, (Date.now() - uploadStartTimeRef.current) / 1000);
-          const speed = totalLoaded / elapsedSec;
+          const rawSpeed = totalLoaded / elapsedSec;
+          const smoothedSpeed = smoothedSpeedRef.current === 0 ? rawSpeed : 0.7 * smoothedSpeedRef.current + 0.3 * rawSpeed;
+          smoothedSpeedRef.current = smoothedSpeed;
           const remainingBytes = Math.max(0, totalTargetBytesRef.current - totalLoaded);
-          const eta = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
+          const eta = smoothedSpeed > 0 ? Math.ceil(remainingBytes / smoothedSpeed) : 0;
           setUploadTelemetry({
             bytesUploaded: totalLoaded,
             totalBytes: totalTargetBytesRef.current,
-            speedBps: speed,
+            speedBps: smoothedSpeed,
             etaSeconds: eta,
             isActive: true
           });
@@ -312,46 +321,69 @@ export default function BulkIngestionWorkspace({
       completedUploadBytesRef.current += local.file.size;
       activeUploadBytesRef.current.delete(statusItem.job_id);
       applyStatus(currentStatus);
-      statusItem = currentStatus.items.find((item) => item.job_id === statusItem.job_id) || statusItem;
-    }
-    if (statusItem.state !== "human_ready") {
-      currentStatus = await processIngestionItem(adminToken, statusItem.job_id);
-      applyStatus(currentStatus);
     }
   }, [adminToken, applyStatus, onNotice]);
+
+  const processAiOne = useCallback(async (statusItem: IngestionItemStatus) => {
+    if (statusItem.state !== "human_ready" && statusItem.state !== "failed") {
+      const currentStatus = await processIngestionItem(adminToken, statusItem.job_id);
+      applyStatus(currentStatus);
+    }
+  }, [adminToken, applyStatus]);
 
   const processItems = async (status: IngestionBatchStatus) => {
     const pendingUploads = status.items.filter((item) => item.upload_state !== "uploaded");
     const totalUploadBytes = pendingUploads.reduce((sum, it) => sum + (it.byte_size || 0), 0);
     completedUploadBytesRef.current = 0;
     activeUploadBytesRef.current.clear();
+    smoothedSpeedRef.current = 0;
     uploadStartTimeRef.current = Date.now();
     totalTargetBytesRef.current = totalUploadBytes;
-    if (totalUploadBytes > 0) {
-      setUploadTelemetry({
-        bytesUploaded: 0,
-        totalBytes: totalUploadBytes,
-        speedBps: 0,
-        etaSeconds: 0,
-        isActive: true
-      });
+
+    if (pendingUploads.length > 0) {
+      if (totalUploadBytes > 0) {
+        setUploadTelemetry({
+          bytesUploaded: 0,
+          totalBytes: totalUploadBytes,
+          speedBps: 0,
+          etaSeconds: 0,
+          isActive: true
+        });
+      }
+
+      await runBounded(pendingUploads, async (item) => {
+        try {
+          await uploadOne(item, itemsRef.current);
+        } catch (error) {
+          onNotice(error instanceof Error ? error.message : `Could not upload ${item.original_filename}.`);
+        }
+      }, UPLOAD_CONCURRENCY);
+
+      setUploadTelemetry((prev) => ({ ...prev, isActive: false }));
+      onNotice("All files uploaded as drafts. Running background AI evaluations...");
     }
 
-    const pending = status.items.filter((item) => item.state !== "human_ready");
-    await runBounded(pending, async (item) => {
-      try {
-        await syncOne(item, items);
-      } catch (error) {
-        onNotice(error instanceof Error ? error.message : `Could not process ${item.original_filename}.`);
-      }
-    });
-    setUploadTelemetry((prev) => ({ ...prev, isActive: false }));
-    const latest = await refreshBatch(status.batch.id).catch(() => null);
-    if (latest?.batch.status === "complete") {
-      onNotice(`Batch complete. ${latest.batch.ready_items} images are ready for human curation.`);
+    const latestStatus = await refreshBatch(status.batch.id).catch(() => batchStatusRef.current || status);
+    const pendingAi = (latestStatus?.items || []).filter(
+      (item) => item.upload_state === "uploaded" && item.state !== "human_ready" && item.state !== "failed"
+    );
+
+    if (pendingAi.length > 0) {
+      await runBounded(pendingAi, async (item) => {
+        try {
+          await processAiOne(item);
+        } catch (error) {
+          // AI errors captured per item
+        }
+      }, AI_CONCURRENCY);
+    }
+
+    const finalStatus = await refreshBatch(status.batch.id).catch(() => null);
+    if (finalStatus?.batch.status === "complete") {
+      onNotice(`Batch complete. ${finalStatus.batch.ready_items} images are ready for human curation.`);
       await onBackendChanged();
-    } else if (latest?.batch.failed_items) {
-      onNotice(`${latest.batch.failed_items} item${latest.batch.failed_items === 1 ? "" : "s"} failed. Retry only the failed items after correcting the issue.`);
+    } else if (finalStatus?.batch.failed_items) {
+      onNotice(`${finalStatus.batch.failed_items} item${finalStatus.batch.failed_items === 1 ? "" : "s"} failed. Retry only the failed items after correcting the issue.`);
     }
   };
 
@@ -365,7 +397,7 @@ export default function BulkIngestionWorkspace({
       return;
     }
     if (totalBytes > BULK_MAX_BATCH_BYTES) {
-      onNotice("The batch exceeds the 200 MiB total limit.");
+      onNotice(`The batch exceeds the ${Math.round(BULK_MAX_BATCH_BYTES / (1024 * 1024))} MiB total limit.`);
       return;
     }
     if (items.some((item) => item.duplicateWarning) && !window.confirm("Duplicate content warnings are present. Upload these items anyway?")) return;
@@ -388,7 +420,7 @@ export default function BulkIngestionWorkspace({
       });
       setBatchId(status.batch.id);
       applyStatus(status);
-      onNotice(`Batch ${status.batch.id} created. Uploading with ${MAX_CONCURRENCY} concurrent workers.`);
+      onNotice(`Batch ${status.batch.id} created. Uploading with ${UPLOAD_CONCURRENCY} concurrent workers.`);
       await processItems(status);
     } catch (error) {
       onNotice(error instanceof Error ? error.message : "Unable to create the ingestion batch.");
@@ -422,6 +454,30 @@ export default function BulkIngestionWorkspace({
       }
     } catch (error) {
       onNotice(error instanceof Error ? error.message : "Unable to reset failed ingestion items.");
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const purgeCurrentBatch = async () => {
+    if (!batchId || !adminToken.trim()) return;
+    if (!window.confirm(`Are you sure you want to purge batch ${batchId}? This will cancel pending uploads and delete uncurated draft rows.`)) {
+      return;
+    }
+    setIsWorking(true);
+    try {
+      await deleteIngestionBatch(adminToken, batchId);
+      items.forEach((item) => {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      });
+      setItems([]);
+      setBatchId(null);
+      setBatchStatus(null);
+      saveSession(null, []);
+      onNotice(`Batch ${batchId} purged successfully.`);
+      await onBackendChanged();
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : "Failed to purge batch.");
     } finally {
       setIsWorking(false);
     }
@@ -530,7 +586,54 @@ export default function BulkIngestionWorkspace({
       )}
 
       <div className="bulk-actions">
-        {!submitted ? <button type="button" className="btn-primary brutalist-border brutalist-shadow-black brutalist-interactive" disabled={isWorking || !canConfirmBulk(items) || totalBytes > BULK_MAX_BATCH_BYTES || !backendMode} onClick={() => void confirmBatch()}>{isWorking ? "Uploading…" : "Confirm & Upload Batch"}</button> : <><button type="button" className="brutalist-border-sm bulk-secondary-button" disabled={isWorking} onClick={() => void resumeBatch()}>{isWorking ? "Processing…" : "Resume pending items"}</button>{failedItems.length > 0 && <button type="button" className="brutalist-border-sm bulk-retry-button" disabled={isWorking} onClick={() => void retryFailed()}>Retry failed ({failedItems.length})</button>}<button type="button" className="brutalist-border-sm bulk-secondary-button" disabled={isWorking} onClick={startNewBatch}>Start new batch</button></>}
+        {!submitted ? (
+          <button
+            type="button"
+            className="btn-primary brutalist-border brutalist-shadow-black brutalist-interactive"
+            disabled={isWorking || !canConfirmBulk(items) || totalBytes > BULK_MAX_BATCH_BYTES || !backendMode}
+            onClick={() => void confirmBatch()}
+          >
+            {isWorking ? "Uploading…" : "Confirm & Upload Batch"}
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="brutalist-border-sm bulk-secondary-button"
+              disabled={isWorking}
+              onClick={() => void resumeBatch()}
+            >
+              {isWorking ? "Processing…" : "Resume pending items"}
+            </button>
+            {failedItems.length > 0 && (
+              <button
+                type="button"
+                className="brutalist-border-sm bulk-retry-button"
+                disabled={isWorking}
+                onClick={() => void retryFailed()}
+              >
+                Retry failed ({failedItems.length})
+              </button>
+            )}
+            <button
+              type="button"
+              className="brutalist-border-sm bulk-secondary-button"
+              disabled={isWorking}
+              onClick={startNewBatch}
+            >
+              Start new batch
+            </button>
+            <button
+              type="button"
+              className="brutalist-border-sm bulk-retry-button"
+              style={{ background: "var(--danger, #ff3366)", color: "#fff" }}
+              disabled={isWorking}
+              onClick={() => void purgeCurrentBatch()}
+            >
+              🗑️ Purge Batch
+            </button>
+          </>
+        )}
       </div>
 
       {batchStatus && <div className="bulk-batch-footer"><strong>Batch status: {batchStatus.batch.status.toUpperCase()}</strong><span>{readyCount}/{batchStatus.batch.total_items} human-ready</span><span>{batchStatus.batch.failed_items} failed</span><span>Refresh-safe server progress is stored in D1. Failed local uploads need the file selected again.</span></div>}

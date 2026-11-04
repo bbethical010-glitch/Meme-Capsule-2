@@ -281,6 +281,15 @@ export const retryIngestionItems = async (adminToken: string, jobIds: string[]) 
   return parseJsonResponse<{ success: boolean; reset_jobs: number; batches: IngestionBatchStatus[] }>(response);
 };
 
+export const deleteIngestionBatch = async (adminToken: string, batchId: string) => {
+  const response = await fetch(`/api/admin/ingestion/batches?id=${encodeURIComponent(batchId)}`, {
+    method: "DELETE",
+    headers: ingestionHeaders(adminToken),
+    cache: "no-store"
+  });
+  return parseJsonResponse<{ success: boolean; deleted_batch_id: string; purged_jobs_count: number }>(response);
+};
+
 export type VaultViewMode =
   | "extra-large-grid"
   | "medium-grid"

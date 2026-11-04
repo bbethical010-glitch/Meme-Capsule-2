@@ -1,8 +1,8 @@
 import type { Env } from "./d1r2";
 
-export const INGESTION_MAX_ITEMS = 50;
+export const INGESTION_MAX_ITEMS = 1000;
 export const INGESTION_MAX_FILE_BYTES = 20 * 1024 * 1024;
-export const INGESTION_MAX_BATCH_BYTES = 200 * 1024 * 1024;
+export const INGESTION_MAX_BATCH_BYTES = 2000 * 1024 * 1024;
 export const INGESTION_MAX_AI_ATTEMPTS = 3;
 export const INGESTION_LEASE_MS = 90_000;
 

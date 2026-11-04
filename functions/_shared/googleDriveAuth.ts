@@ -82,7 +82,7 @@ export const getGoogleDriveAuth = async (env: Env): Promise<{ accessToken: strin
       iss: account.client_email,
       sub: account.client_email,
       aud: "https://oauth2.googleapis.com/token",
-      scope: "https://www.googleapis.com/auth/drive.readonly",
+      scope: "https://www.googleapis.com/auth/drive",
       iat: now,
       exp: now + 3600
     })

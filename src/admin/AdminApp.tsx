@@ -30,7 +30,15 @@ import SqlRunner from "./sql-runner/SqlRunner";
 import PushNotifications from "./PushNotifications";
 import ScheduledNotifications from "./ScheduledNotifications";
 import BulkIngestionWorkspace from "./BulkIngestionWorkspace";
+import {
+  CURATION_TOPICS,
+  CURATION_TONES,
+  CURATION_MECHANISMS,
+  type CorpusStatus
+} from "../curate/curateTypes";
 import "./admin.css";
+
+const ImageEditorModal = React.lazy(() => import("../curate/editor/ImageEditorModal"));
 
 type FormState = Omit<AdminMeme, "tags"> & {
   tags: string;
@@ -200,6 +208,163 @@ export default function AdminApp() {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "draft" | "archived" | "excluded" | "nsfw">("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Resizable Details Drawer State & Canvas Image Editor State
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    try {
+      const saved = window.localStorage.getItem("mc_admin_vault_panel_width");
+      return saved ? Math.max(320, Math.min(750, parseInt(saved, 10))) : 420;
+    } catch {
+      return 420;
+    }
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const [editingWithImageEditor, setEditingWithImageEditor] = useState<AdminMeme | null>(null);
+
+  // Instant In-Panel Curation State
+  const [curationAction, setCurationAction] = useState<CorpusStatus>("keep");
+  const [curationTopics, setCurationTopics] = useState<string[]>([]);
+  const [curationTone, setCurationTone] = useState<string | null>(null);
+  const [curationMechanisms, setCurationMechanisms] = useState<string[]>([]);
+  const [curationDuplicateOf, setCurationDuplicateOf] = useState("");
+  const [curatorNote, setCuratorNote] = useState("");
+  const [isSavingCuration, setIsSavingCuration] = useState(false);
+
+  useEffect(() => {
+    if (!inspectedMeme) return;
+    const currentStatus = (inspectedMeme as any).final_status || (inspectedMeme as any).curation_status;
+    if (["keep", "excluded", "duplicate", "review_later"].includes(currentStatus)) {
+      setCurationAction(currentStatus as CorpusStatus);
+    } else {
+      setCurationAction("keep");
+    }
+    const topics = (inspectedMeme as any).topics;
+    setCurationTopics(Array.isArray(topics) ? topics : []);
+    setCurationTone((inspectedMeme as any).tone || null);
+    const mechs = (inspectedMeme as any).humour_mechanisms;
+    setCurationMechanisms(Array.isArray(mechs) ? mechs : []);
+    setCurationDuplicateOf((inspectedMeme as any).duplicate_of || "");
+    setCuratorNote((inspectedMeme as any).curator_note || "");
+  }, [inspectedMeme]);
+
+  const handleSplitterMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMouseMove = (e: MouseEvent) => {
+      const newWidth = Math.max(320, Math.min(750, window.innerWidth - e.clientX));
+      setPanelWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      setIsResizing(false);
+      try {
+        window.localStorage.setItem("mc_admin_vault_panel_width", String(panelWidth));
+      } catch {
+        // Ignore
+      }
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [isResizing, panelWidth]);
+
+  const handleToggleNsfw = async (meme: AdminMeme) => {
+    const nextNsfw = !Boolean((meme as any).is_nsfw);
+    try {
+      const res = await fetch("/api/curate/nsfw", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`
+        },
+        body: JSON.stringify({ meme_id: meme.id, is_nsfw: nextNsfw })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to update NSFW flag.");
+      const updatedMeme = { ...meme, is_nsfw: nextNsfw ? 1 : 0 };
+      setCollection((prev) => prev.map((m) => (m.id === meme.id ? updatedMeme : m)));
+      if (inspectedMeme?.id === meme.id) setInspectedMeme(updatedMeme);
+      setNotice(`Meme ${meme.id} marked as ${nextNsfw ? "NSFW" : "SAFE"}.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Error toggling NSFW flag.");
+    }
+  };
+
+  const handleForceRemove = async (memeId: string) => {
+    if (!window.confirm(`Permanently force remove meme ${memeId}? This purges the R2 object and all database records immediately. Non-undoable.`)) {
+      return;
+    }
+    try {
+      const res = await fetch("/api/curate/force-remove", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`
+        },
+        body: JSON.stringify({ meme_id: memeId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to force remove meme.");
+      setCollection((prev) => prev.filter((m) => m.id !== memeId));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(memeId);
+        return next;
+      });
+      setInspectedMeme(null);
+      setTotalFilteredCount((c) => Math.max(0, c - 1));
+      setNotice(`Meme ${memeId} permanently force-removed from R2 and database.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Error during force remove.");
+    }
+  };
+
+  const handleSaveCuration = async (meme: AdminMeme) => {
+    setIsSavingCuration(true);
+    try {
+      const res = await fetch("/api/curate/save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`
+        },
+        body: JSON.stringify({
+          meme_id: meme.id,
+          corpus_status: curationAction,
+          duplicate_of: curationAction === "duplicate" ? curationDuplicateOf.trim() : null,
+          topics: curationTopics,
+          tone: curationTone,
+          humour_mechanisms: curationMechanisms,
+          curator_note: curatorNote.trim() || null
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to save curation.");
+      const updatedMeme = {
+        ...meme,
+        final_status: curationAction,
+        curation_status: curationAction,
+        topics: curationTopics,
+        tone: curationTone,
+        humour_mechanisms: curationMechanisms,
+        duplicate_of: curationDuplicateOf,
+        curator_note: curatorNote
+      };
+      setCollection((prev) => prev.map((m) => (m.id === meme.id ? updatedMeme : m)));
+      setInspectedMeme(updatedMeme);
+      setNotice(`Curation decision committed for ${meme.id} (${curationAction.toUpperCase()}).`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Error saving curation decision.");
+    } finally {
+      setIsSavingCuration(false);
+    }
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1072,11 +1237,71 @@ export default function AdminApp() {
                   )}
                 </div>
 
-                {/* Contextual Details Panel (Inspector) */}
-                {(inspectedMeme || selectedIds.size > 1) && (
-                  <aside className="vault-inspector brutalist-border brutalist-shadow-black">
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "12px 16px",
+                      background: "var(--surface-container)",
+                      border: "2px solid black"
+                    }}
+                  >
+                    <button
+                      type="button"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="brutalist-border-sm brutalist-interactive"
+                      style={{
+                        padding: "6px 16px",
+                        background: currentPage === 1 ? "var(--surface-container-lowest)" : "var(--surface)",
+                        color: "var(--on-surface)",
+                        fontWeight: 700,
+                        cursor: currentPage === 1 ? "not-allowed" : "pointer",
+                        opacity: currentPage === 1 ? 0.5 : 1
+                      }}
+                    >
+                      ◀ Prev
+                    </button>
+                    <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--secondary)" }}>
+                      Page {currentPage} of {totalPages} ({backendMode ? totalFilteredCount : filteredCollection.length} total)
+                    </span>
+                    <button
+                      type="button"
+                      disabled={currentPage === totalPages}
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      className="brutalist-border-sm brutalist-interactive"
+                      style={{
+                        padding: "6px 16px",
+                        background: currentPage === totalPages ? "var(--surface-container-lowest)" : "var(--surface)",
+                        color: "var(--on-surface)",
+                        fontWeight: 700,
+                        cursor: currentPage === totalPages ? "not-allowed" : "pointer",
+                        opacity: currentPage === totalPages ? 0.5 : 1
+                      }}
+                    >
+                      Next ▶
+                    </button>
+                  </div>
+                )}
+              </section>
+
+              {/* Resizable Details Drawer / Instant Curation Dashboard */}
+              {(inspectedMeme || selectedIds.size > 1) && !editingOriginalId && (
+                <>
+                  <div
+                    className={`vault-splitter-handle ${isResizing ? "resizing" : ""}`}
+                    onMouseDown={handleSplitterMouseDown}
+                    title="Click and drag to resize details panel"
+                  />
+                  <aside
+                    className="vault-details-drawer custom-scrollbar"
+                    style={{ width: `${panelWidth}px` }}
+                  >
                     <div className="vault-inspector-header">
-                      <h4>{selectedIds.size > 1 ? `BULK ACTIONS (${selectedIds.size} SELECTED)` : "MEME INSPECTOR"}</h4>
+                      <h4>{selectedIds.size > 1 ? `BULK ACTIONS (${selectedIds.size} SELECTED)` : "MEME VAULT / INSTANT CURATION"}</h4>
                       <button
                         type="button"
                         className="brutalist-border-sm"
@@ -1129,6 +1354,7 @@ export default function AdminApp() {
                       </div>
                     ) : inspectedMeme ? (
                       <>
+                        {/* Media Preview */}
                         <div className="vault-inspector-media">
                           {inspectedMeme.media_type === "video" ? (
                             <video controls src={inspectedMeme.url} style={{ maxHeight: "200px" }} />
@@ -1137,6 +1363,57 @@ export default function AdminApp() {
                           )}
                         </div>
 
+                        {/* Quick Action Buttons */}
+                        <div className="vault-quick-actions">
+                          <button
+                            type="button"
+                            className={`vault-quick-btn ${Boolean((inspectedMeme as any).is_nsfw) ? "nsfw-active" : ""}`}
+                            style={{
+                              background: Boolean((inspectedMeme as any).is_nsfw) ? "#ff3366" : "var(--surface)",
+                              color: Boolean((inspectedMeme as any).is_nsfw) ? "#fff" : "var(--on-surface)"
+                            }}
+                            onClick={() => void handleToggleNsfw(inspectedMeme)}
+                            title="Toggle persisted NSFW moderation flag"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>
+                              {Boolean((inspectedMeme as any).is_nsfw) ? "explicit" : "verified_user"}
+                            </span>
+                            {Boolean((inspectedMeme as any).is_nsfw) ? "🔞 NSFW (FLAGGED)" : "SAFE"}
+                          </button>
+
+                          <button
+                            type="button"
+                            className="vault-quick-btn force-remove"
+                            onClick={() => void handleForceRemove(inspectedMeme.id)}
+                            title="Permanently remove from R2 and database"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>delete_forever</span>
+                            FORCE REMOVE
+                          </button>
+
+                          <button
+                            type="button"
+                            className="vault-quick-btn"
+                            style={{ background: "var(--primary)", color: "var(--on-primary)" }}
+                            onClick={() => setEditingWithImageEditor(inspectedMeme)}
+                            title="Open Canvas Image Editor (Crop, Blur, Mosaic, Text)"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>palette</span>
+                            EDIT IMAGE
+                          </button>
+
+                          <button
+                            type="button"
+                            className="vault-quick-btn"
+                            style={{ background: "var(--secondary)", color: "#000" }}
+                            onClick={() => editMeme(inspectedMeme)}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>edit</span>
+                            METADATA
+                          </button>
+                        </div>
+
+                        {/* Metadata Snapshot */}
                         <div className="vault-inspector-fields">
                           <div className="vault-inspector-field">
                             <label>Meme ID (Immutable)</label>
@@ -1162,108 +1439,222 @@ export default function AdminApp() {
                             <label>Rarity</label>
                             <span>{inspectedMeme.rarity || "Common"}</span>
                           </div>
-                          <div className="vault-inspector-field">
-                            <label>Likes Count</label>
-                            <span>{inspectedMeme.likes_count ?? 0}</span>
-                          </div>
-                          <div className="vault-inspector-field">
-                            <label>NSFW Flag</label>
-                            <span>{Boolean((inspectedMeme as any).is_nsfw) ? "🔞 NSFW" : "SAFE"}</span>
-                          </div>
                         </div>
 
-                        <div className="vault-inspector-actions">
+                        {/* INSTANT IN-PANEL CURATION DASHBOARD */}
+                        <div style={{ marginTop: "8px", borderTop: "2px solid #000", paddingTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                          <h4 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: "15px", color: "var(--secondary)", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                            ⚡ Instant Curation Dashboard
+                          </h4>
+
+                          {/* LAYER 0 — EDITORIAL ACTION */}
+                          <div className="vault-curation-section">
+                            <div className="vault-curation-header">
+                              <span style={{ color: "var(--primary)" }}>LAYER 0 — EDITORIAL ACTION</span>
+                              <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--secondary)" }}>{curationAction.toUpperCase()}</span>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "6px" }}>
+                              <button
+                                type="button"
+                                className="brutalist-border-sm"
+                                style={{
+                                  padding: "6px",
+                                  fontSize: "11px",
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                  background: curationAction === "keep" ? "#34c759" : "#242424",
+                                  color: "#fff"
+                                }}
+                                onClick={() => setCurationAction("keep")}
+                              >
+                                [KEEP]
+                              </button>
+                              <button
+                                type="button"
+                                className="brutalist-border-sm"
+                                style={{
+                                  padding: "6px",
+                                  fontSize: "11px",
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                  background: curationAction === "excluded" ? "#ff3366" : "#242424",
+                                  color: "#fff"
+                                }}
+                                onClick={() => setCurationAction("excluded")}
+                              >
+                                [EXCLUDED]
+                              </button>
+                              <button
+                                type="button"
+                                className="brutalist-border-sm"
+                                style={{
+                                  padding: "6px",
+                                  fontSize: "11px",
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                  background: curationAction === "duplicate" ? "#ff9f0a" : "#242424",
+                                  color: "#fff"
+                                }}
+                                onClick={() => setCurationAction("duplicate")}
+                              >
+                                [DUPLICATE]
+                              </button>
+                              <button
+                                type="button"
+                                className="brutalist-border-sm"
+                                style={{
+                                  padding: "6px",
+                                  fontSize: "11px",
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                  background: curationAction === "review_later" ? "#5ac8fa" : "#242424",
+                                  color: "#fff"
+                                }}
+                                onClick={() => setCurationAction("review_later")}
+                              >
+                                [REVIEW LATER]
+                              </button>
+                            </div>
+
+                            {curationAction === "duplicate" && (
+                              <div style={{ marginTop: "4px" }}>
+                                <label style={{ display: "block", fontSize: "10px", color: "var(--outline)", fontWeight: 700 }}>DUPLICATE TARGET (MEME ID OR SHORTCODE):</label>
+                                <input
+                                  className="brutalist-input"
+                                  style={{ fontSize: "11px", padding: "4px 8px" }}
+                                  value={curationDuplicateOf}
+                                  onChange={(e) => setCurationDuplicateOf(e.target.value)}
+                                  placeholder="e.g. meme-8e8cfb7f..."
+                                />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 1. TOPIC (WHAT IS IT ABOUT?) */}
+                          <div className="vault-curation-section">
+                            <div className="vault-curation-header">
+                              <span style={{ color: "#9b30ff" }}>1. TOPIC (WHAT IS IT ABOUT?)</span>
+                              <span style={{ fontSize: "10px", fontWeight: 700, color: curationTopics.length >= 3 ? "#f4c300" : "#888" }}>
+                                {curationTopics.length} / 3 MAX
+                              </span>
+                            </div>
+                            <div className="vault-curation-pills">
+                              {CURATION_TOPICS.map((t) => {
+                                const isSelected = curationTopics.includes(t.id);
+                                return (
+                                  <button
+                                    key={t.id}
+                                    type="button"
+                                    className={`vault-curation-pill ${isSelected ? "selected" : ""}`}
+                                    style={{
+                                      background: isSelected ? "#9b30ff" : "#242424",
+                                      color: isSelected ? "#fff" : "#ddd"
+                                    }}
+                                    onClick={() => {
+                                      setCurationTopics((prev) =>
+                                        prev.includes(t.id) ? prev.filter((id) => id !== t.id) : prev.length < 3 ? [...prev, t.id] : prev
+                                      );
+                                    }}
+                                  >
+                                    {t.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* 2. DOMINANT TONE */}
+                          <div className="vault-curation-section">
+                            <div className="vault-curation-header">
+                              <span style={{ color: "#f4c300" }}>2. DOMINANT TONE</span>
+                              <span style={{ fontSize: "10px", fontWeight: 700, color: "#888" }}>
+                                {curationTone ? curationTone.toUpperCase() : "1 DOMINANT TONE"}
+                              </span>
+                            </div>
+                            <div className="vault-curation-pills">
+                              {CURATION_TONES.map((t) => {
+                                const isSelected = curationTone === t.id;
+                                return (
+                                  <button
+                                    key={t.id}
+                                    type="button"
+                                    className={`vault-curation-pill ${isSelected ? "selected" : ""}`}
+                                    style={{
+                                      background: isSelected ? t.color : "#242424",
+                                      color: isSelected ? "#000" : "#ddd"
+                                    }}
+                                    onClick={() => setCurationTone((prev) => (prev === t.id ? null : t.id))}
+                                  >
+                                    {t.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* 3. HUMOUR MECHANISM */}
+                          <div className="vault-curation-section">
+                            <div className="vault-curation-header">
+                              <span style={{ color: "var(--primary)" }}>3. HUMOUR MECHANISM</span>
+                              <span style={{ fontSize: "10px", fontWeight: 700, color: curationMechanisms.length >= 2 ? "#f4c300" : "#888" }}>
+                                {curationMechanisms.length} / 2 MAX
+                              </span>
+                            </div>
+                            <div className="vault-curation-pills">
+                              {CURATION_MECHANISMS.map((m) => {
+                                const isSelected = curationMechanisms.includes(m.id);
+                                return (
+                                  <button
+                                    key={m.id}
+                                    type="button"
+                                    className={`vault-curation-pill ${isSelected ? "selected" : ""}`}
+                                    style={{
+                                      background: isSelected ? "var(--primary)" : "#242424",
+                                      color: isSelected ? "#000" : "#ddd"
+                                    }}
+                                    onClick={() => {
+                                      setCurationMechanisms((prev) =>
+                                        prev.includes(m.id) ? prev.filter((id) => id !== m.id) : prev.length < 2 ? [...prev, m.id] : prev
+                                      );
+                                    }}
+                                  >
+                                    {m.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Curator Note */}
+                          <div>
+                            <label style={{ display: "block", fontSize: "10px", color: "var(--outline)", fontWeight: 700, marginBottom: "2px" }}>
+                              CURATOR NOTE (OPTIONAL):
+                            </label>
+                            <input
+                              className="brutalist-input"
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              value={curatorNote}
+                              onChange={(e) => setCuratorNote(e.target.value)}
+                              placeholder="Notes about editorial nuance, translation, or context..."
+                            />
+                          </div>
+
+                          {/* Save Curation Button */}
                           <button
                             type="button"
-                            className="brutalist-border-sm"
-                            onClick={() => editMeme(inspectedMeme)}
-                            style={{ background: "var(--primary)", color: "var(--on-primary)" }}
+                            className="btn-primary brutalist-border brutalist-shadow-black brutalist-interactive"
+                            style={{ padding: "8px", fontWeight: 900, fontSize: "13px", cursor: isSavingCuration ? "wait" : "pointer" }}
+                            disabled={isSavingCuration}
+                            onClick={() => void handleSaveCuration(inspectedMeme)}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>edit</span> Edit
+                            {isSavingCuration ? "Saving Curation..." : "💾 Commit Curation to Database"}
                           </button>
-                          <a
-                            href={`/curate#id=${encodeURIComponent(inspectedMeme.id)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="brutalist-border-sm"
-                            style={{ background: "var(--secondary)", color: "#000" }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>rate_review</span> Re-Curate
-                          </a>
-                          <button
-                            type="button"
-                            className="brutalist-border-sm"
-                            onClick={() => deleteMeme(inspectedMeme.id)}
-                            style={{ background: "var(--surface)", color: "var(--on-surface)" }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>archive</span> {inspectedMeme.status === "archived" ? "Restore" : "Archive"}
-                          </button>
-                          {backendMode && (
-                            <button
-                              type="button"
-                              className="brutalist-border-sm"
-                              style={{ background: "#ff2a2a", color: "#fff" }}
-                              onClick={() => hardDeleteMemes([inspectedMeme.id])}
-                            >
-                              <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>delete_forever</span> Hard Delete
-                            </button>
-                          )}
                         </div>
                       </>
                     ) : null}
                   </aside>
-                )}
-
-                {/* Pagination Controls */}
-                {totalPages > 1 && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "12px 16px",
-                      background: "var(--surface-container)",
-                      border: "2px solid black"
-                    }}
-                  >
-                    <button
-                      type="button"
-                      disabled={currentPage === 1}
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      className="brutalist-border-sm brutalist-interactive"
-                      style={{
-                        padding: "6px 16px",
-                        background: currentPage === 1 ? "var(--surface-container-lowest)" : "var(--surface)",
-                        color: "var(--on-surface)",
-                        fontWeight: 700,
-                        cursor: currentPage === 1 ? "not-allowed" : "pointer",
-                        opacity: currentPage === 1 ? 0.5 : 1
-                      }}
-                    >
-                      ◀ Prev
-                    </button>
-                    <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--secondary)" }}>
-                      Page {currentPage} of {totalPages} ({backendMode ? totalFilteredCount : filteredCollection.length} total)
-                    </span>
-                    <button
-                      type="button"
-                      disabled={currentPage === totalPages}
-                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                      className="brutalist-border-sm brutalist-interactive"
-                      style={{
-                        padding: "6px 16px",
-                        background: currentPage === totalPages ? "var(--surface-container-lowest)" : "var(--surface)",
-                        color: "var(--on-surface)",
-                        fontWeight: 700,
-                        cursor: currentPage === totalPages ? "not-allowed" : "pointer",
-                        opacity: currentPage === totalPages ? 0.5 : 1
-                      }}
-                    >
-                      Next ▶
-                    </button>
-                  </div>
-                )}
-              </section>
+                </>
+              )}
 
               {/* RIGHT PANE - EDITOR (ONLY WHEN EDITING AN EXISTING MEME) */}
               {editingOriginalId && (
@@ -1350,7 +1741,6 @@ export default function AdminApp() {
                           <option value="Common">Common</option>
                           <option value="Rare">Rare</option>
                           <option value="Legendary">Legendary</option>
-                          <option value="Mythic">Mythic</option>
                         </select>
                       </div>
                       <div className="form-group">
@@ -1438,6 +1828,31 @@ export default function AdminApp() {
           )}
         </div>
       </div>
+
+      {editingWithImageEditor && (
+        <React.Suspense fallback={null}>
+          <ImageEditorModal
+            meme={{
+              id: editingWithImageEditor.id,
+              image_url: editingWithImageEditor.url,
+              title: editingWithImageEditor.title
+            } as any}
+            token={adminToken}
+            onClose={() => setEditingWithImageEditor(null)}
+            onSaveSuccess={({ id, image_url, storage_path }) => {
+              const updatedMeme = {
+                ...editingWithImageEditor,
+                url: image_url,
+                storage_path: storage_path || editingWithImageEditor.storage_path
+              };
+              setCollection((prev) => prev.map((m) => (m.id === id ? updatedMeme : m)));
+              if (inspectedMeme?.id === id) setInspectedMeme(updatedMeme);
+              setEditingWithImageEditor(null);
+              setNotice(`Image edited and saved successfully for ${id}!`);
+            }}
+          />
+        </React.Suspense>
+      )}
     </main>
   );
 }

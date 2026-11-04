@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-04
+
+- **Admin Console & Ingestion Pipeline Overhaul**:
+  - **Decoupled Two-Stage Ingestion**: Separated high-speed media upload (`UPLOAD_CONCURRENCY = 6`) into R2 and D1 draft creation from asynchronous background advisory AI evaluation (`AI_CONCURRENCY = 3`), eliminating upload freezing and drastically speeding up batch intake.
+  - **Intake Scale & Chunking**: Increased batch limits to 1,000 files and 2,000 MiB (2 GB). Added D1 parameter and statement chunking (`chunkArray(..., 50)`, `STATEMENT_CHUNK_SIZE = 40`) preventing SQLite parameter overflow errors.
+  - **Durable Batch Purge**: Added `deleteIngestionBatch` API endpoint (`DELETE /api/admin/ingestion/batches?id=...`) and `[🗑️ Purge Batch]` button in UI to safely delete abandoned batches and purge private uncurated draft rows.
+  - **Concurrent Web Hashing & Telemetry**: Offloaded image hashing to concurrent `crypto.subtle` SHA-256 operations (`Promise.all`); implemented smoothed Exponential Moving Average (EMA) upload speed and ETA telemetry.
+  - **Meme Vault Redesign & Resizable Details Drawer**: Relocated misplaced inspector into a dedicated right-side details panel with a draggable splitter handle (`col-resize`, width 320px–750px, localStorage persisted, responsive drawer overlay on mobile).
+  - **Embedded Instant In-Panel Curation Dashboard**: Added one-click `🔞 NSFW` toggle with live D1 update, irreversible `🗑️ FORCE REMOVE` (R2 + D1 purge with admin bearer auth), `🎨 EDIT IMAGE` (Konva CAS canvas editor with crop, blur, mosaic, and text tools), `✏️ METADATA` inline editing, Layer 0 editorial actions (`[KEEP]`, `[EXCLUDED]`, `[DUPLICATE]`, `[REVIEW LATER]`), Layers 1–3 taxonomy pills (topics, tone, humour mechanisms), and `[💾 Commit Curation to Database]` button committing directly to D1 without navigating away to `/curate`.
+  - **Purged Obsolete Forms & SQLite Constraint Fix**: Completely eliminated the obsolete Add Meme creation portal from Meme Vault and removed invalid `Mythic` rarity option to match SQLite schema `CHECK (rarity IN ('Common', 'Rare', 'Legendary'))`.
+  - **Google Drive Multi-Bot Script Team with 2-Folder Quarantine Relocation**: Architected multi-bot team (`driveFolderResolverBot`, `driveFetcherBot`, `dedupSecurityBot`, `ingestionUploaderBot`, `driveRelocatorBot`, `auditLoggerBot`) with zero-egress shortcode/ID regex deduplication and automatic relocation of successfully uploaded files to an `_Uploaded_Memes` subfolder. Failed files strictly remain in root quarantine and are never logged as uploaded in DB.
+
 ## 2026-10-13
 
 - **Single-Judge Adoption & Authoritative Finality**: Added `POST /api/curate/approve` allowing human curators to finalize decisions directly into `meme_curation_final` and update `memes` atomically, bypassing SuperAdmin arbitration for approved workflows.

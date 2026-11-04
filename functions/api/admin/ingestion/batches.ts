@@ -32,6 +32,14 @@ type BatchPayload = {
 
 const itemKeyPattern = /^[a-z0-9][a-z0-9-_]{2,120}$/i;
 
+const chunkArray = <T>(items: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+};
+
 const parsePayload = async (request: Request): Promise<BatchPayload> => {
   try {
     return (await request.json()) as BatchPayload;
@@ -142,31 +150,45 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     if (totalBytes > INGESTION_MAX_BATCH_BYTES) {
-      return json({ error: "The batch exceeds the 200 MiB total payload limit." }, { status: 400 });
+      return json({ error: `The batch exceeds the ${Math.round(INGESTION_MAX_BATCH_BYTES / (1024 * 1024))} MiB total payload limit.` }, { status: 400 });
     }
 
-    const memePlaceholders = normalizedItems.map(() => "?").join(",");
-    const existingMemes = await env.DB.prepare(
-      `SELECT id FROM memes WHERE id IN (${memePlaceholders})`
-    ).bind(...normalizedItems.map((item) => item.memeId)).all<{ id: string }>();
-    if ((existingMemes.results || []).length > 0) {
+    const existingMemesIds: string[] = [];
+    for (const chunk of chunkArray(normalizedItems.map((item) => item.memeId), 50)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const res = await env.DB.prepare(
+        `SELECT id FROM memes WHERE id IN (${placeholders})`
+      ).bind(...chunk).all<{ id: string }>();
+      for (const row of res.results || []) existingMemesIds.push(row.id);
+    }
+    if (existingMemesIds.length > 0) {
       return json({
         error: "One or more generated intake IDs already exist. Remove the conflicting item and add it again so a new stable ID can be generated.",
-        conflicting_ids: (existingMemes.results || []).map((row) => row.id)
+        conflicting_ids: existingMemesIds
       }, { status: 409 });
     }
 
-    const existingKeys = await env.DB.prepare(
-      `SELECT idempotency_key FROM ingestion_jobs WHERE idempotency_key IN (${memePlaceholders})`
-    ).bind(...normalizedItems.map((item) => item.idempotencyKey)).all<{ idempotency_key: string }>();
-    if ((existingKeys.results || []).length > 0) {
+    const existingKeysList: string[] = [];
+    for (const chunk of chunkArray(normalizedItems.map((item) => item.idempotencyKey), 50)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const res = await env.DB.prepare(
+        `SELECT idempotency_key FROM ingestion_jobs WHERE idempotency_key IN (${placeholders})`
+      ).bind(...chunk).all<{ idempotency_key: string }>();
+      for (const row of res.results || []) existingKeysList.push(row.idempotency_key);
+    }
+    if (existingKeysList.length > 0) {
       return json({ error: "One or more item idempotency keys already belong to another batch." }, { status: 409 });
     }
 
-    const hashRows = await env.DB.prepare(
-      `SELECT job_id, content_hash FROM ingestion_jobs WHERE content_hash IN (${memePlaceholders})`
-    ).bind(...normalizedItems.map((item) => item.contentHash)).all<{ job_id: string; content_hash: string }>();
-    const existingHashJobs = new Map((hashRows.results || []).map((row) => [row.content_hash, row.job_id]));
+    const existingHashJobs = new Map<string, string>();
+    for (const chunk of chunkArray(normalizedItems.map((item) => item.contentHash), 50)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const res = await env.DB.prepare(
+        `SELECT job_id, content_hash FROM ingestion_jobs WHERE content_hash IN (${placeholders})`
+      ).bind(...chunk).all<{ job_id: string; content_hash: string }>();
+      for (const row of res.results || []) existingHashJobs.set(row.content_hash, row.job_id);
+    }
+
     const batchId = `batch-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
     const statements: D1PreparedStatement[] = [
@@ -210,11 +232,59 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       }
     }
 
-    await env.DB.batch(statements);
+    const STATEMENT_CHUNK_SIZE = 40;
+    for (let i = 0; i < statements.length; i += STATEMENT_CHUNK_SIZE) {
+      await env.DB.batch(statements.slice(i, i + STATEMENT_CHUNK_SIZE));
+    }
+
     await refreshBatchStatus(env.DB, batchId);
     const status = await getBatchStatus(env, batchId);
     return status ? json(status, { status: 201 }) : json({ error: "Batch was created but could not be read back." }, { status: 503 });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Unable to create ingestion batch." }, { status: 400 });
   }
+};
+
+export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
+  const adminError = requireAdmin(request, env);
+  if (adminError) return adminError;
+  if (!(await hasIngestionSchema(env.DB))) return schemaUnavailable();
+
+  const batchId = (new URL(request.url).searchParams.get("id") || "").trim();
+  if (!batchId) return json({ error: "id is required." }, { status: 400 });
+
+  const batch = await env.DB.prepare("SELECT * FROM ingestion_batches WHERE id = ?")
+    .bind(batchId)
+    .first<IngestionBatchRow>();
+  if (!batch) return json({ error: "Ingestion batch not found." }, { status: 404 });
+
+  const jobsRes = await env.DB.prepare("SELECT job_id, meme_id, storage_path FROM ingestion_jobs WHERE batch_id = ?")
+    .bind(batchId)
+    .all<{ job_id: string; meme_id: string; storage_path: string | null }>();
+  const jobs = jobsRes.results || [];
+
+  if (jobs.length > 0) {
+    const memeIds = jobs.map((j) => j.meme_id);
+    for (const chunk of chunkArray(memeIds, 50)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      await env.DB.prepare(`DELETE FROM memes WHERE id IN (${placeholders}) AND status = 'draft' AND is_active = 0`)
+        .bind(...chunk)
+        .run()
+        .catch(() => undefined);
+    }
+
+    for (const job of jobs) {
+      if (job.storage_path) {
+        await env.MEMES_BUCKET.delete(job.storage_path).catch(() => undefined);
+      }
+    }
+  }
+
+  await env.DB.prepare("DELETE FROM ingestion_batches WHERE id = ?").bind(batchId).run();
+
+  return json({
+    success: true,
+    deleted_batch_id: batchId,
+    purged_jobs_count: jobs.length
+  });
 };

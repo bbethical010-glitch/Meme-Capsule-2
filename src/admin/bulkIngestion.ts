@@ -1,8 +1,8 @@
 import type { IngestionItemStatus } from "../lib/adminApi";
 
-export const BULK_MAX_ITEMS = 50;
+export const BULK_MAX_ITEMS = 1000;
 export const BULK_MAX_FILE_BYTES = 20 * 1024 * 1024;
-export const BULK_MAX_BATCH_BYTES = 200 * 1024 * 1024;
+export const BULK_MAX_BATCH_BYTES = 2000 * 1024 * 1024;
 
 const SUPPORTED_MIME_TYPES = new Set([
   "image/avif",

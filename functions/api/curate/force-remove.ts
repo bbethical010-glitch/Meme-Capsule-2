@@ -22,8 +22,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     await ensureCurationTables(env.DB);
     const sessionUser = await validateSession(request, env);
-    if (!sessionUser) {
-      return json({ error: "Curator authentication required." }, { status: 401 });
+    const authHeader = request.headers.get("Authorization");
+    const adminToken = env.ADMIN_API_TOKEN;
+    const isSuperToken = Boolean(authHeader && adminToken && authHeader === `Bearer ${adminToken}`);
+
+    if (!sessionUser && !isSuperToken) {
+      return json({ error: "Curator or Admin authentication required." }, { status: 401 });
     }
 
     const body = (await request.json().catch(() => ({}))) as ForceRemovePayload;
@@ -33,12 +37,15 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return json({ error: "meme_id is required." }, { status: 400 });
     }
 
+    const actorId = sessionUser?.id || "superadmin";
+    const actorName = sessionUser?.display_name || "SuperAdmin";
+
     await hardRemoveMeme(
       env,
       memeId,
-      `Manual Force Remove by ${sessionUser.display_name}`,
-      sessionUser.id,
-      sessionUser.display_name
+      `Manual Force Remove by ${actorName}`,
+      actorId,
+      actorName
     );
 
     return json({

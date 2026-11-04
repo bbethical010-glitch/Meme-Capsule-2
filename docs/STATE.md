@@ -355,4 +355,51 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
   - All 27 automated tests passing across `test:editor`, `test:vault`, `test:ingestion`, `test:analytics`, and `curationConsensus`.
   - `npm run build` compiled 1,713 modules cleanly with zero errors.
 
+---
+
+## 14. Admin Overhaul: Decoupled Intake, Resizable Meme Vault & Google Drive Multi-Bot Quarantine Relocation (November 4, 2026)
+
+- **1. Decoupled Fast Ingestion Pipeline (`BulkIngestionWorkspace.tsx`, `batches.ts`, `ingestion.ts`)**:
+  - **Capacity Expansion**: Raised limits to 1,000 items and 2,000 MiB (2 GB) total batch payload.
+  - **D1 Parameter & Statement Chunking**: Added `chunkArray(..., 50)` lookups and `STATEMENT_CHUNK_SIZE = 40` execution chunking to prevent SQLite parameter limits.
+  - **Decoupled Two-Stage Ingestion**: Separated R2 uploads from AI evaluations.
+    - Stage 1 (Fast Uploads): Runs with `UPLOAD_CONCURRENCY = 6`, immediately streaming images to R2 and creating private D1 rows with `status='draft'`.
+    - Stage 2 (Background Advisory AI): Runs with `AI_CONCURRENCY = 3` in the background without blocking upload completion.
+  - **Smoothed Real-Time Telemetry**: Real-time upload speed and ETA computed with Exponential Moving Average (EMA) to prevent jumpy estimates.
+  - **Concurrent Web Hashing**: Browser `crypto.subtle` SHA-256 operations executed concurrently across CPU threads via `Promise.all`.
+  - **Durable Batch Purge**: Added `deleteIngestionBatch` endpoint (`DELETE /api/admin/ingestion/batches?id=...`) and `[🗑️ Purge Batch]` UI button to safely purge failed or abandoned batches and uncurated draft rows.
+
+- **2. Meme Vault Redesign & Instant In-Panel Curation Dashboard (`AdminApp.tsx`, `admin.css`)**:
+  - **Relocated Details Panel**: Removed misplaced inspector from bottom of the left list; relocated into a dedicated right-side resizable drawer.
+  - **Draggable Splitter Handle**: Added vertical `.vault-splitter-handle` (`cursor: col-resize`) on the left edge of the details panel. Width adjusts fluidly from 320px to 750px and persists across sessions via `localStorage` (`mc_admin_vault_panel_width`). Responsive drawer on mobile/tablet (<1024px).
+  - **Instant In-Panel Curation Dashboard**:
+    - `[🔞 NSFW / SAFE]` quick button: Toggles persisted NSFW moderation flag via `POST /api/curate/nsfw`, updating D1 and local UI state immediately.
+    - `[🗑️ FORCE REMOVE]` quick button: Permanently removes meme via `POST /api/curate/force-remove` with admin bearer auth; physically deletes media from R2 bucket, sets `is_active=0`, writes `meme_force_removals` audit record, and updates UI collections immediately.
+    - `[🎨 EDIT IMAGE]` quick button: Launches `ImageEditorModal` canvas editor directly from the panel, supporting crop, blur, mosaic, and text modifications.
+    - **Layer 0 — Editorial Action**: `[KEEP]`, `[EXCLUDED]`, `[DUPLICATE]`, `[REVIEW LATER]` buttons with duplicate target input.
+    - **Layers 1–3 Taxonomy**: Topic pills (`CURATION_TOPICS`, max 3), Dominant Tone pills (`CURATION_TONES`, 1 tone), Humour Mechanism pills (`CURATION_MECHANISMS`, max 2).
+    - **Curator Notes**: Direct textarea input.
+    - **Database Commit**: `[💾 Commit Curation to Database]` button commits curation decisions directly to D1 via `POST /api/curate/save` without leaving the Vault.
+  - **Rarity Check Constraint Fix**: Removed invalid `<option value="Mythic">Mythic</option>` to match D1 schema `CHECK (rarity IN ('Common', 'Rare', 'Legendary'))`.
+  - **Purged Legacy Form Residuals**: Obsolete single-item intake form completely eliminated from Meme Vault.
+
+- **3. Google Drive Multi-Bot Script Team with 2-Folder Quarantine Relocation (`drive-cron.ts`, `googleDriveAuth.ts`)**:
+  - **Drive Scope Expansion**: Expanded Google OAuth2 service account scope to `https://www.googleapis.com/auth/drive` to allow folder creation and file relocation.
+  - **`driveFolderResolverBot`**: Ensures the root folder exists, then finds or automatically creates an `_Uploaded_Memes` subfolder inside the root.
+  - **`driveFetcherBot`**: Scans the root directory for image files, ignoring subfolders.
+  - **`dedupSecurityBot`**: Extracts filename shortcodes via regex `/(?:\[|\b)([A-Z0-9_-]{4,16})(?:\]|\b)/i` and checks D1 (`memes` and `ingestion_jobs`) before downloading any bytes (zero egress cost).
+  - **`ingestionUploaderBot`**: Validates MIME/bytes, computes SHA-256 hash, uploads to R2, and registers D1 draft rows.
+  - **`driveRelocatorBot`**: Moves completed files from root to `_Uploaded_Memes` via Drive API `addParents`/`removeParents`.
+  - **Inviolable Safety Rule**: Any file that fails processing is NEVER recorded in D1 and NEVER moved to `_Uploaded_Memes`. It remains untouched in the root directory for human review, and detailed error logs with ISO timestamps are recorded.
+
+- **4. Verification & Status**:
+  - All 27 automated tests passing:
+    - `npm run test:vault` (5 tests passing)
+    - `npm run test:ingestion` (4 tests passing)
+    - `npm run test:editor` (4 tests passing)
+    - `npm run test:analytics` (5 tests passing)
+    - `node --test tests/curationConsensus.test.mjs` (9 tests passing)
+  - Production build: `tsc && vite build` compiled 1,713 modules in 15s with code-split `ImageEditorModal` and zero errors.
+
+
 
