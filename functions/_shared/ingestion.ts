@@ -339,12 +339,11 @@ export const refreshBatchStatus = async (db: D1Database, batchId: string) => {
   const busy = Number(counts?.busy_items || 0);
 
   // Decoupled batch status calculation:
-  // An advisory AI evaluation failure must NEVER mark the batch as "failed" if uploads succeeded.
-  // "failed" is reserved strictly for batches where all uploads failed.
-  const status = total > 0 && ready === total
+  // The intake batch status represents whether all items were successfully uploaded into R2 and D1 drafts:
+  // If all uploads succeeded, status is "complete".
+  // An advisory AI evaluation failure must NEVER mark the batch as "failed" or "partial" if uploads succeeded.
+  const status = total > 0 && uploaded === total
     ? "complete"
-    : total > 0 && uploaded === total && busy === 0
-    ? (aiFailed > 0 ? "partial" : "complete")
     : busy > 0
     ? "processing"
     : uploadFailed === total && total > 0

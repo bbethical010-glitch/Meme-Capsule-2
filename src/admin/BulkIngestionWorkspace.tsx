@@ -3,7 +3,6 @@ import {
   createIngestionBatch,
   deleteIngestionBatch,
   getIngestionBatch,
-  processIngestionItem,
   retryIngestionItems,
   uploadIngestionItem,
   type IngestionBatchStatus,
@@ -23,7 +22,6 @@ import {
 
 const SESSION_KEY = "meme-capsule:admin-ingestion-session";
 const UPLOAD_CONCURRENCY = 6;
-const AI_CONCURRENCY = 3;
 
 const formatSpeed = (bytesPerSec: number) => {
   if (bytesPerSec <= 0 || !Number.isFinite(bytesPerSec)) return "0 KB/s";
@@ -76,23 +74,6 @@ const uploadStateClass = (item: BulkDraftItem) => {
   return "badge-pending";
 };
 
-const aiStateLabel = (item: BulkDraftItem) => {
-  if (!item.server || item.server.upload_state !== "uploaded") return null;
-  if (item.server.state === "human_ready") return "AI READY (ARCHIVED)";
-  if (item.server.state === "processing") return "AI PREPROCESSING...";
-  if (item.server.state === "failed") return "AI OFFLINE / RETRY";
-  if (item.server.state === "retry_wait") return "AI RETRY WAITING";
-  return "AI PENDING";
-};
-
-const aiStateClass = (item: BulkDraftItem) => {
-  if (!item.server) return "ai-pending";
-  if (item.server.state === "human_ready") return "ai-ready";
-  if (item.server.state === "processing") return "ai-processing";
-  if (item.server.state === "failed" || item.server.state === "retry_wait") return "ai-retry";
-  return "ai-pending";
-};
-
 const mergeServerStatus = (items: BulkDraftItem[], status: IngestionBatchStatus) =>
   items.map((item) => {
     const server = status.items.find((candidate) => candidate.idempotency_key === item.clientItemId);
@@ -106,7 +87,7 @@ const mergeServerStatus = (items: BulkDraftItem[], status: IngestionBatchStatus)
       : item;
   });
 
-const runBounded = async <T,>(values: T[], worker: (value: T) => Promise<void>, concurrency = 4) => {
+const runBounded = async <T,>(values: T[], worker: (value: T) => Promise<void>, concurrency = 6) => {
   let cursor = 0;
   const runWorker = async () => {
     while (cursor < values.length) {
@@ -130,7 +111,6 @@ export default function BulkIngestionWorkspace({
   const [batchStatus, setBatchStatus] = useState<IngestionBatchStatus | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
-  const [isAiWorking, setIsAiWorking] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [uploadTelemetry, setUploadTelemetry] = useState<{
     bytesUploaded: number;
@@ -160,25 +140,13 @@ export default function BulkIngestionWorkspace({
   const totalBytes = useMemo(() => totalDraftBytes(items), [items]);
   const invalidCount = useMemo(() => items.filter((item) => item.validationErrors.length > 0).length, [items]);
 
-  // Decoupled counts
+  // Decoupled upload counts - strictly file and media ingestion
   const uploadedCount = useMemo(
     () => items.filter((item) => item.server?.upload_state === "uploaded").length,
     [items]
   );
   const failedUploadItems = useMemo(
     () => items.filter((item) => item.server && item.server.upload_state === "failed"),
-    [items]
-  );
-  const readyAiCount = useMemo(
-    () => items.filter((item) => item.server && item.server.state === "human_ready").length,
-    [items]
-  );
-  const failedAiItems = useMemo(
-    () => items.filter((item) => item.server && item.server.upload_state === "uploaded" && item.server.state === "failed"),
-    [items]
-  );
-  const pendingAiCount = useMemo(
-    () => items.filter((item) => item.server && item.server.upload_state === "uploaded" && item.server.state !== "human_ready" && item.server.state !== "failed").length,
     [items]
   );
 
@@ -233,11 +201,22 @@ export default function BulkIngestionWorkspace({
         }));
         setItems(mergeServerStatus(hydrated, serverStatus));
         applyStatus(serverStatus);
+        const upCount = serverStatus.items.filter((it) => it.upload_state === "uploaded").length;
+        if (upCount === serverStatus.items.length && upCount > 0) {
+          setUploadTelemetry({
+            bytesUploaded: serverStatus.batch.total_bytes,
+            totalBytes: serverStatus.batch.total_bytes,
+            speedBps: 0,
+            etaSeconds: 0,
+            isActive: true,
+            isComplete: true
+          });
+        }
         onNotice(`Restored intake session for batch ${persisted.batchId}.`);
       })
-      .catch(() => onNotice("Saved intake progress could not be loaded. Check that migration 025 is applied, then refresh."))
+      .catch(() => onNotice("Saved intake progress could not be loaded."))
       .finally(() => setIsRestoring(false));
-  }, [adminToken, backendMode, onNotice]);
+  }, [adminToken, backendMode, onNotice, applyStatus]);
 
   useEffect(() => {
     if (batchId) saveSession(batchId, items);
@@ -255,7 +234,7 @@ export default function BulkIngestionWorkspace({
 
   const addFiles = async (fileList: FileList | File[]) => {
     if (submitted && !items.some((item) => !item.server || item.server.upload_state !== "uploaded")) {
-      onNotice("This batch has already completed its uploads. Start a new batch before adding files.");
+      onNotice("This batch has already completed its uploads. Click 'Start new batch' to add more memes.");
       return;
     }
     const selected = Array.from(fileList);
@@ -301,7 +280,7 @@ export default function BulkIngestionWorkspace({
     const withWarnings = applyDuplicateWarnings(nextItems);
     setItems(withWarnings);
     if (withWarnings.some((item) => item.validationErrors.length > 0)) {
-      onNotice("Some files need attention before the batch can be confirmed. Video files are rejected in this release.");
+      onNotice("Some files need attention before the batch can be confirmed. Video files are rejected in bulk intake.");
     } else if (submitted && batchId) {
       onNotice(`${withWarnings.length} image${withWarnings.length === 1 ? "" : "s"} restored for retry. Resume the batch to continue.`);
     } else {
@@ -372,13 +351,6 @@ export default function BulkIngestionWorkspace({
     }
   }, [adminToken, applyStatus, onNotice]);
 
-  const processAiOne = useCallback(async (statusItem: IngestionItemStatus) => {
-    if (statusItem.state !== "human_ready" && statusItem.state !== "failed") {
-      const currentStatus = await processIngestionItem(adminToken, statusItem.job_id);
-      applyStatus(currentStatus);
-    }
-  }, [adminToken, applyStatus]);
-
   const uploadBatchFiles = async (status: IngestionBatchStatus) => {
     const pendingUploads = status.items.filter((item) => item.upload_state !== "uploaded");
     const totalUploadBytes = pendingUploads.reduce((sum, it) => sum + (it.byte_size || 0), 0);
@@ -411,7 +383,7 @@ export default function BulkIngestionWorkspace({
       const uploaded = latestStatus?.items.filter((it) => it.upload_state === "uploaded").length || 0;
       const total = latestStatus?.items.length || status.items.length;
 
-      // STICKY CONFIRMATION - stays visible
+      // STICKY CONFIRMATION - stays permanently visible after completion
       setUploadTelemetry((prev) => ({
         ...prev,
         bytesUploaded: prev.totalBytes,
@@ -422,9 +394,9 @@ export default function BulkIngestionWorkspace({
       }));
 
       if (uploaded === total) {
-        onNotice(`✓ All ${total} images successfully uploaded to Cloudflare R2 and registered as Drafts in D1.`);
+        onNotice(`✓ All ${total} memes successfully uploaded to Cloudflare R2 and registered as Drafts in D1.`);
       } else {
-        onNotice(`${uploaded} of ${total} images uploaded. Review any failed network items below.`);
+        onNotice(`${uploaded} of ${total} memes uploaded. Any failed network files can be retried.`);
       }
 
       await onBackendChanged();
@@ -433,49 +405,9 @@ export default function BulkIngestionWorkspace({
     return status;
   };
 
-  const runAiEvaluations = async (status?: IngestionBatchStatus | null) => {
-    const targetStatus = status || batchStatusRef.current;
-    if (!targetStatus || !batchId || !adminToken.trim()) return;
-
-    const pendingAi = targetStatus.items.filter(
-      (item) => item.upload_state === "uploaded" && item.state !== "human_ready" && item.state !== "failed"
-    );
-
-    if (pendingAi.length === 0) {
-      onNotice("All uploaded items have already completed AI evaluations.");
-      return;
-    }
-
-    setIsAiWorking(true);
-    onNotice(`Starting advisory AI evaluations for ${pendingAi.length} item(s)...`);
-    try {
-      await runBounded(pendingAi, async (item) => {
-        try {
-          await processAiOne(item);
-        } catch {
-          // AI errors isolated per item
-        }
-      }, AI_CONCURRENCY);
-
-      const finalStatus = await refreshBatch(targetStatus.batch.id).catch(() => null);
-      if (finalStatus?.batch.status === "complete") {
-        onNotice(`AI evaluations complete. ${finalStatus.batch.ready_items} images promoted to archived for human curation.`);
-        await onBackendChanged();
-      } else {
-        const ready = finalStatus?.items.filter((i) => i.state === "human_ready").length || 0;
-        const failedAi = finalStatus?.items.filter((i) => i.state === "failed").length || 0;
-        onNotice(`AI evaluations finished. ${ready} ready, ${failedAi} advisory retryable.`);
-      }
-    } catch (error) {
-      onNotice(error instanceof Error ? error.message : "Advisory AI evaluation encountered an error.");
-    } finally {
-      setIsAiWorking(false);
-    }
-  };
-
   const confirmBatch = async () => {
     if (!backendMode || !adminToken.trim()) {
-      onNotice("Connect the Admin backend with an API token before confirming a durable batch.");
+      onNotice("Connect the Admin backend with an API token before confirming a batch.");
       return;
     }
     if (!canConfirmBulk(items)) {
@@ -506,12 +438,12 @@ export default function BulkIngestionWorkspace({
       });
       setBatchId(status.batch.id);
       applyStatus(status);
-      onNotice(`Batch ${status.batch.id} created. Uploading with ${UPLOAD_CONCURRENCY} concurrent workers.`);
+      onNotice(`Batch ${status.batch.id} created. Uploading ${items.length} files to Cloudflare R2...`);
       await uploadBatchFiles(status);
     } catch (error) {
       onNotice(error instanceof Error ? error.message : "Unable to create the ingestion batch.");
     } finally {
-      setIsWorking(false);
+      setIsWorking(false); // Controls immediately unlocked once files are in R2 and D1 drafts!
     }
   };
 
@@ -542,23 +474,6 @@ export default function BulkIngestionWorkspace({
       onNotice(error instanceof Error ? error.message : "Unable to reset failed upload items.");
     } finally {
       setIsWorking(false);
-    }
-  };
-
-  const retryFailedAi = async () => {
-    if (!adminToken.trim() || failedAiItems.length === 0) return;
-    setIsAiWorking(true);
-    try {
-      const result = await retryIngestionItems(adminToken, failedAiItems.map((item) => item.server!.job_id));
-      const status = result.batches.find((candidate) => candidate.batch.id === batchId) || result.batches[0];
-      if (status) {
-        applyStatus(status);
-        await runAiEvaluations(status);
-      }
-    } catch (error) {
-      onNotice(error instanceof Error ? error.message : "Unable to reset failed AI evaluations.");
-    } finally {
-      setIsAiWorking(false);
     }
   };
 
@@ -610,25 +525,40 @@ export default function BulkIngestionWorkspace({
       isComplete: false
     });
     saveSession(null, []);
-    onNotice("New bulk intake batch ready.");
+    onNotice("Ready for fresh meme upload batch.");
   };
 
   return (
     <section className="bulk-ingestion-panel brutalist-border brutalist-shadow-black-lg" aria-labelledby="bulk-ingestion-heading">
       <div className="bulk-ingestion-heading">
         <div>
-          <p className="bulk-kicker">PHASE 4 / DURABLE INTAKE</p>
+          <p className="bulk-kicker">INGESTION & UPLOAD PIPELINE</p>
           <h3 id="bulk-ingestion-heading">Bulk Add Memes</h3>
-          <p className="bulk-description">Review image files first. Upload creates private draft metadata, then both advisory AI evaluations must succeed before the item is promoted to archived and unlocked for human curation.</p>
+          <p className="bulk-description">
+            Drag or select images to upload directly to Cloudflare R2 and register as D1 Drafts. Upload completes immediately upon media and draft confirmation. AI and human curation occur independently downstream.
+          </p>
         </div>
-        <div className="bulk-limits" aria-label="Bulk intake limits">
-          <strong>{items.length}/{BULK_MAX_ITEMS}</strong>
-          <span>{formatBytes(totalBytes)} / {formatBytes(BULK_MAX_BATCH_BYTES)}</span>
-          {batchStatus?.storage_usage && (
-            <span style={{ fontSize: "11px", color: "var(--tertiary, #00bb77)", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "4px" }} title="R2 Storage Utilization calculated from D1 intake metadata">
-              📦 R2: {formatBytes(batchStatus.storage_usage.total_bytes)} ({batchStatus.storage_usage.total_files} items)
-            </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          {submitted && (
+            <button
+              type="button"
+              className="brutalist-border-sm bulk-secondary-button"
+              style={{ fontSize: "11px", padding: "4px 8px" }}
+              onClick={startNewBatch}
+              title="Clear current session and start a brand new upload batch"
+            >
+              Start Fresh Batch
+            </button>
           )}
+          <div className="bulk-limits" aria-label="Bulk intake limits">
+            <strong>{items.length}/{BULK_MAX_ITEMS}</strong>
+            <span>{formatBytes(totalBytes)} / {formatBytes(BULK_MAX_BATCH_BYTES)}</span>
+            {batchStatus?.storage_usage && (
+              <span style={{ fontSize: "11px", color: "var(--tertiary, #00bb77)", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "4px" }} title="R2 Storage Utilization calculated from D1 intake metadata">
+                📦 R2: {formatBytes(batchStatus.storage_usage.total_bytes)} ({batchStatus.storage_usage.total_files} items)
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -679,7 +609,7 @@ export default function BulkIngestionWorkspace({
       >
         <span className="material-symbols-outlined" aria-hidden="true">photo_library</span>
         <strong>{submitted ? `BATCH ${batchId}` : "DROP IMAGES HERE"}</strong>
-        <span>{submitted ? "This batch is locked; resume or retry its durable progress below." : "or choose multiple PNG, JPEG, GIF, WebP, or AVIF files"}</span>
+        <span>{submitted ? "This batch is active; start a new batch or review uploaded items below." : "or choose multiple PNG, JPEG, GIF, WebP, or AVIF files"}</span>
         {(!submitted || items.some((item) => item.server && item.server.upload_state !== "uploaded")) && (
           <button type="button" className="brutalist-border-sm bulk-choose-button" onClick={() => inputRef.current?.click()}>
             {submitted ? "Re-select pending files" : "Choose images"}
@@ -697,7 +627,7 @@ export default function BulkIngestionWorkspace({
             <span>Preview / filename</span>
             <span>Title</span>
             <span>Size / type</span>
-            <span>Stable ID / Status</span>
+            <span>Stable ID / Upload Status</span>
             <span>Action</span>
           </div>
           {items.map((item) => (
@@ -719,12 +649,9 @@ export default function BulkIngestionWorkspace({
                 <code>{item.memeId}</code>
                 <div className="bulk-badge-group">
                   <span className={`bulk-badge ${uploadStateClass(item)}`}>{uploadStateLabel(item)}</span>
-                  {aiStateLabel(item) && (
-                    <span
-                      className={`bulk-ai-badge ${aiStateClass(item)}`}
-                      title={item.server?.error_message || "Advisory AI evaluation state"}
-                    >
-                      {aiStateLabel(item)}
+                  {item.server?.state === "human_ready" && (
+                    <span className="bulk-ai-badge ai-ready" title="Promoted to archived in curation pipeline">
+                      ARCHIVED (HUMAN READY)
                     </span>
                   )}
                 </div>
@@ -759,32 +686,21 @@ export default function BulkIngestionWorkspace({
           <>
             <button
               type="button"
-              className="brutalist-border-sm bulk-secondary-button"
+              className="btn-primary brutalist-border brutalist-shadow-black brutalist-interactive"
               disabled={isWorking}
               onClick={startNewBatch}
             >
-              Start new batch
+              Start New Batch
             </button>
             {onOpenVault && (
               <button
                 type="button"
                 className="brutalist-border-sm bulk-secondary-button"
-                style={{ borderColor: "var(--primary, #00f0ff)", color: "var(--primary, #00f0ff)" }}
+                style={{ borderColor: "var(--primary, #00f0ff)", color: "var(--primary, #00f0ff)", fontWeight: 700 }}
                 onClick={onOpenVault}
                 title="View newly ingested drafts in the Meme Vault"
               >
                 Open Drafts in Meme Vault ↗
-              </button>
-            )}
-            {pendingAiCount > 0 && (
-              <button
-                type="button"
-                className="brutalist-border-sm bulk-secondary-button"
-                style={{ borderColor: "var(--secondary, #ffe600)" }}
-                disabled={isAiWorking || isWorking}
-                onClick={() => void runAiEvaluations()}
-              >
-                {isAiWorking ? "Evaluating AI..." : `Run AI Advisory (${pendingAiCount})`}
               </button>
             )}
             {failedUploadItems.length > 0 && (
@@ -794,18 +710,7 @@ export default function BulkIngestionWorkspace({
                 disabled={isWorking}
                 onClick={() => void retryFailedUploads()}
               >
-                Retry failed uploads ({failedUploadItems.length})
-              </button>
-            )}
-            {failedAiItems.length > 0 && (
-              <button
-                type="button"
-                className="brutalist-border-sm bulk-secondary-button"
-                style={{ borderColor: "#a855f7", color: "#c084fc" }}
-                disabled={isAiWorking || isWorking}
-                onClick={() => void retryFailedAi()}
-              >
-                Retry AI evaluations ({failedAiItems.length})
+                Retry Failed Uploads ({failedUploadItems.length})
               </button>
             )}
             <button
@@ -825,18 +730,12 @@ export default function BulkIngestionWorkspace({
         <div className="bulk-batch-footer">
           <strong>Batch status: {batchStatus.batch.status.toUpperCase()}</strong>
           <span>Uploaded: {uploadedCount}/{items.length} (drafts)</span>
-          <span>Curated: {readyAiCount}/{items.length} (human-ready)</span>
           {failedUploadItems.length > 0 && (
             <span style={{ color: "#ff3366", fontWeight: 700 }}>
               {failedUploadItems.length} upload(s) failed
             </span>
           )}
-          {failedAiItems.length > 0 && (
-            <span style={{ color: "#c084fc" }}>
-              {failedAiItems.length} AI advisory pending/retry
-            </span>
-          )}
-          <span>Refresh-safe server progress is stored in D1. Completed drafts remain safely preserved even if AI evaluations are retried.</span>
+          <span>Refresh-safe server progress is stored in D1. Ingested memes are stored as Drafts and immediately available in Meme Vault and Curation.</span>
         </div>
       )}
       <p className="bulk-footnote">Images only · max {formatBytes(BULK_MAX_FILE_BYTES)} per file · no upload publishes content or creates a human vote.</p>

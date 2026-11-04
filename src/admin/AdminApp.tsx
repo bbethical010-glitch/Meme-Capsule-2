@@ -594,9 +594,10 @@ export default function AdminApp() {
     }
   }, [currentPage, pageSize, statusFilter, debouncedSearch]);
 
-  // Intercept Ctrl+R / Cmd+R to refresh admin data without browser page reload
+  // Intercept Ctrl+R / Cmd+R to refresh admin data without browser page reload, but allow Ctrl+Shift+R for hard browser reload
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.shiftKey) return; // Allow hard reload
       if ((e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R")) {
         e.preventDefault();
         handleAutoRefresh();
