@@ -69,6 +69,10 @@ export type IngestionBatchStatus = {
     updated_at: string;
     completed_at: string | null;
   };
+  storage_usage?: {
+    total_bytes: number;
+    total_files: number;
+  };
   items: IngestionItemStatus[];
 };
 
@@ -209,17 +213,52 @@ export const getIngestionBatch = async (adminToken: string, batchId: string) => 
   return parseJsonResponse<IngestionBatchStatus>(response);
 };
 
-export const uploadIngestionItem = async (adminToken: string, batchId: string, jobId: string, file: File) => {
-  const body = new FormData();
-  body.append("batch_id", batchId);
-  body.append("job_id", jobId);
-  body.append("file", file, file.name);
-  const response = await fetch("/api/admin/ingestion/upload", {
-    method: "POST",
-    headers: ingestionHeaders(adminToken),
-    body
+export const uploadIngestionItem = (
+  adminToken: string,
+  batchId: string,
+  jobId: string,
+  file: File,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<IngestionBatchStatus & { recoverable?: boolean; storage_path?: string }> => {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/admin/ingestion/upload");
+    const headers = ingestionHeaders(adminToken);
+    for (const [key, val] of Object.entries(headers)) {
+      xhr.setRequestHeader(key, val);
+    }
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(e.loaded, e.total);
+        }
+      };
+    }
+    xhr.onload = () => {
+      try {
+        const payload = JSON.parse(xhr.responseText || "{}");
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(payload);
+        } else {
+          reject(new Error(payload.error || `Upload failed with HTTP ${xhr.status}`));
+        }
+      } catch {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve({} as any);
+        } else {
+          reject(new Error(`Upload failed with HTTP ${xhr.status}`));
+        }
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error during file upload."));
+    xhr.ontimeout = () => reject(new Error("Timeout during file upload."));
+
+    const body = new FormData();
+    body.append("batch_id", batchId);
+    body.append("job_id", jobId);
+    body.append("file", file, file.name);
+    xhr.send(body);
   });
-  return parseJsonResponse<IngestionBatchStatus & { recoverable?: boolean; storage_path?: string }>(response);
 };
 
 export const processIngestionItem = async (adminToken: string, jobId: string) => {

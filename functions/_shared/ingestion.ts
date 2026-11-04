@@ -87,6 +87,10 @@ export type IngestionEvaluationRow = {
 
 export type IngestionBatchStatus = {
   batch: IngestionBatchRow;
+  storage_usage?: {
+    total_bytes: number;
+    total_files: number;
+  };
   items: Array<{
     job_id: string;
     idempotency_key: string;
@@ -231,8 +235,24 @@ export const getBatchStatus = async (env: Env, batchId: string): Promise<Ingesti
     }
   }
 
+  let storageUsage = { total_bytes: 0, total_files: 0 };
+  try {
+    const statsRow = await env.DB.prepare(
+      "SELECT COUNT(*) as total_files, COALESCE(SUM(byte_size), 0) as total_bytes FROM ingestion_jobs WHERE upload_state = 'uploaded'"
+    ).first<{ total_files: number; total_bytes: number }>();
+    if (statsRow) {
+      storageUsage = {
+        total_files: Number(statsRow.total_files) || 0,
+        total_bytes: Number(statsRow.total_bytes) || 0
+      };
+    }
+  } catch {
+    // Non-blocking fallback if ingestion_jobs does not exist yet
+  }
+
   return {
     batch,
+    storage_usage: storageUsage,
     items: jobs.map((job) => ({
       job_id: job.job_id,
       idempotency_key: job.idempotency_key,

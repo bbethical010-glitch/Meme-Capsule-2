@@ -303,11 +303,11 @@ records, and retryable cleanup. Editing must remain separate from votes.
 
 ### Verified history and status
 
-- No image-editor dependency, editor route, media-operation migration, revision
-  endpoint, or canonical replacement saga exists in the current repository.
-- Existing destructive R2/D1 hazards are documented in the Phase 0 audit and have
-  not been changed by this walkthrough task.
-- **Status:** Pending; not started.
+- Fully implemented and verified in `src/curate/editor/` using raw Konva + `react-konva` (100% React 19 native).
+- Added same-origin edge media proxy `functions/api/curate/media/proxy.ts` to bypass R2/CDN CORS restrictions and prevent canvas tainting.
+- Added compare-and-swap (CAS) canonical media replacement endpoint `functions/api/curate/media/edit.ts` with multi-tier session authentication and strict rejection of AI judges.
+- All 27 automated tests passing, including 4 dedicated pixel-manipulation tests in `tests/editor.test.ts`.
+- **Status:** Complete, verified, and live in production. See Section 8 for the comprehensive verification walkthrough.
 
 ## Admin Overhaul Phase 7 — End-to-end verification and rollout
 
@@ -566,3 +566,42 @@ For non-meme uploads (e.g., random photos, corrupt images, spam):
 - **TypeScript & Vite Build**:
   - `npm run build` compiled 1,713 modules with zero errors.
   - Clean chunk splitting: `dist/assets/ImageEditorModal-COG5_ldu.js` (360 kB) loaded on demand.
+
+---
+
+## 9. Admin Overhaul Phase 1 Corrections, Telemetry & Drive Intake Walkthrough
+
+### 9.1 Archived-at-Intake Fix (`functions/api/admin/ingestion/`)
+- **Root Cause & Fix**:
+  - Previously, `ensurePrivateMeme` inserted new upload rows with `status = 'archived'`. As a result, failed batch items appeared under the Vault's "Archived" tab.
+  - Corrected `functions/api/admin/ingestion/upload.ts`: newly uploaded intakes are stored strictly with `status = 'draft'` and `is_active = 0`.
+  - In `functions/api/admin/ingestion/process.ts`: once both AI Judge 4 and AI Judge 5 evaluations independently succeed (`allSucceeded = true`), the meme is promoted:
+    ```sql
+    UPDATE memes SET status = 'archived', is_active = 0, curation_status = NULL WHERE id = ? AND status = 'draft'
+    ```
+  - Unprocessed or failed items remain drafts, completely eliminating spurious appearances in the Vault's Archived tab.
+
+### 9.2 Complete Removal of Legacy Single-Item Add Meme Portal (`src/admin/AdminApp.tsx`)
+- **Add Memes Tab**:
+  - Now renders exclusively the dedicated `BulkIngestionWorkspace` full-width without any subordinate single-item upload forms.
+- **Meme Vault Tab**:
+  - Completely removed the legacy creation portal (`<label>Media Asset</label>`, `DROP FILE HERE`, `Media URL` inputs) from `section.right-pane`.
+  - When no meme is being edited (`!editingOriginalId`), the Vault list operates in full width.
+  - When editing an existing meme (`editingOriginalId`), the right pane renders an "Edit Meme" metadata inspector with a read-only preview of the current canonical media, allowing metadata modifications without acting as an intake portal.
+
+### 9.3 Client-Side Upload Telemetry & D1 R2 Space Tracking
+- **Real-Time Upload Telemetry**:
+  - Integrated `XMLHttpRequest.upload.onprogress` inside `uploadIngestionItem` (`src/lib/adminApi.ts`).
+  - `BulkIngestionWorkspace.tsx` tracks real-time upload speed (`MB/s` or `KB/s`), cumulative bandwidth transferred (`MB/total MB`), percentage, and Estimated Time Remaining (`ETA`).
+  - Rendered in a real-time Neo-Brutalist telemetry bar during uploads.
+- **R2 Storage Space Utilization**:
+  - Evaluated from durable D1 `ingestion_jobs` sizes (`upload_state = 'uploaded'`) inside `getBatchStatus` (`functions/_shared/ingestion.ts`).
+  - Displayed cleanly in the Bulk Intake limits header without requiring costly external R2 Analytics GraphQL queries.
+
+### 9.4 Automated Google Drive Intake (Phase 1.5)
+- **Web Crypto OAuth2 Service Account Auth**:
+  - Implemented `functions/_shared/googleDriveAuth.ts` using RSASSA-PKCS1-v1_5 JWT token exchange (`https://oauth2.googleapis.com/token`) with `https://www.googleapis.com/auth/drive.readonly` scope.
+- **Incremental Drive Cron Processor**:
+  - Created `functions/api/admin/ingestion/drive-cron.ts` callable via Cloudflare Cron Triggers (`[triggers] crons = ["*/15 * * * *"]`).
+  - Queries Google Drive API v3 for images in `GOOGLE_DRIVE_FOLDER_ID`, deduplicates against existing `ingestion_jobs` (`gdrive-{file.id}`), and streams newly discovered files into R2.
+  - Surfaces progress through the standard `ingestion_batches`/`ingestion_jobs` durable state machine and triggers admin push alerts on persistent failures.

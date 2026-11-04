@@ -332,4 +332,27 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
     - Local D1 schema verified against migration `025_durable_meme_ingestion.sql` (`ingestion_batches`, `ingestion_jobs`, `ingestion_ai_evaluations`).
     - Live Cloudflare Pages production environment gracefully returns 503 on ingestion endpoints due to `hasIngestionSchema` safety guard pending production `wrangler d1 migrations apply meme-capsule-db --remote` execution with user Cloudflare credentials.
 
+---
+
+## 13. Admin Overhaul Phase 1 Corrections, Telemetry & Drive Intake Automation (November 4, 2026)
+
+- **Archived-at-Intake Fix**:
+  - `functions/api/admin/ingestion/upload.ts`: Changed initial intake insertion from `status = 'archived'` to `status = 'draft'`. Newly uploaded records remain drafts with `is_active = 0` and `curation_status = NULL`.
+  - `functions/api/admin/ingestion/process.ts`: Promotes meme record to `status = 'archived'` ONLY when both AI Judge 4 and Judge 5 advisory evaluations succeed (`allSucceeded = true`). Failed or unreviewed batches never appear under the Vault's "Archived" filter.
+- **Legacy Upload Portal Removal (`src/admin/AdminApp.tsx`)**:
+  - `Add Memes` tab: Rendered strictly with `BulkIngestionWorkspace` full-width; subordinate single-item upload portal removed.
+  - `Meme Vault` tab: Removed legacy creation portal (`<label>Media Asset</label>`, `DROP FILE HERE`, `Media URL` inputs) from right pane. When not editing a meme (`!editingOriginalId`), Vault operates in full width. When editing an existing meme (`editingOriginalId`), right pane renders an "Edit Meme" metadata editor with a read-only preview of the current canonical media.
+- **Client-Side Real-Time Upload Telemetry**:
+  - `src/lib/adminApi.ts`: Updated `uploadIngestionItem` using `XMLHttpRequest.upload.onprogress` to emit progress events.
+  - `src/admin/BulkIngestionWorkspace.tsx`: Real-time telemetry bar tracks upload speed (`MB/s` or `KB/s`), cumulative bandwidth transferred (`MB/total MB`), and dynamic Estimated Time Remaining (`ETA`).
+- **D1 R2 Space Utilization Running Total**:
+  - Evaluates total uploaded storage size from D1 `ingestion_jobs` (`upload_state = 'uploaded'`) in `functions/_shared/ingestion.ts` (`getBatchStatus`).
+  - Displays persistent R2 storage usage badge in the Bulk Intake limits strip.
+- **Phase 1.5: Automated Google Drive Intake**:
+  - `functions/_shared/googleDriveAuth.ts`: Pure Web Crypto RSASSA-PKCS1-v1_5 JWT signing for Google Drive API v3 OAuth2 token exchange with `https://www.googleapis.com/auth/drive.readonly` scope.
+  - `functions/api/admin/ingestion/drive-cron.ts`: Incremental scheduled intake endpoint for Cloudflare Cron Triggers (`[triggers] crons = ["*/15 * * * *"]`). Polls `GOOGLE_DRIVE_FOLDER_ID`, deduplicates via `gdrive-{file.id}`, streams into R2, and registers intake batches/jobs. Dispatches persistent admin alerts on auth failure.
+- **Verification & Status**:
+  - All 27 automated tests passing across `test:editor`, `test:vault`, `test:ingestion`, `test:analytics`, and `curationConsensus`.
+  - `npm run build` compiled 1,713 modules cleanly with zero errors.
+
 

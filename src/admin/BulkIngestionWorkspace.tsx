@@ -23,6 +23,19 @@ import {
 const SESSION_KEY = "meme-capsule:admin-ingestion-session";
 const MAX_CONCURRENCY = 3;
 
+const formatSpeed = (bytesPerSec: number) => {
+  if (bytesPerSec <= 0 || !Number.isFinite(bytesPerSec)) return "0 KB/s";
+  return `${formatBytes(bytesPerSec)}/s`;
+};
+
+const formatEta = (seconds: number) => {
+  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return "--";
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s < 10 ? "0" : ""}${s}s`;
+};
+
 type BulkIngestionWorkspaceProps = {
   adminToken: string;
   backendMode: boolean;
@@ -100,6 +113,23 @@ export default function BulkIngestionWorkspace({
   const [isDragging, setIsDragging] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [uploadTelemetry, setUploadTelemetry] = useState<{
+    bytesUploaded: number;
+    totalBytes: number;
+    speedBps: number;
+    etaSeconds: number;
+    isActive: boolean;
+  }>({
+    bytesUploaded: 0,
+    totalBytes: 0,
+    speedBps: 0,
+    etaSeconds: 0,
+    isActive: false
+  });
+  const activeUploadBytesRef = useRef<Map<string, number>>(new Map());
+  const completedUploadBytesRef = useRef<number>(0);
+  const uploadStartTimeRef = useRef<number>(0);
+  const totalTargetBytesRef = useRef<number>(0);
   const itemsRef = useRef(items);
 
   const submitted = Boolean(batchId);
@@ -256,7 +286,31 @@ export default function BulkIngestionWorkspace({
         onNotice(`${local?.fileName || statusItem.original_filename} needs to be re-selected before it can be retried.`);
         return;
       }
-      currentStatus = await uploadIngestionItem(adminToken, statusItem.batch_id, statusItem.job_id, local.file);
+      currentStatus = await uploadIngestionItem(
+        adminToken,
+        statusItem.batch_id,
+        statusItem.job_id,
+        local.file,
+        (loaded) => {
+          activeUploadBytesRef.current.set(statusItem.job_id, loaded);
+          let activeBytes = 0;
+          activeUploadBytesRef.current.forEach((val) => { activeBytes += val; });
+          const totalLoaded = completedUploadBytesRef.current + activeBytes;
+          const elapsedSec = Math.max(0.2, (Date.now() - uploadStartTimeRef.current) / 1000);
+          const speed = totalLoaded / elapsedSec;
+          const remainingBytes = Math.max(0, totalTargetBytesRef.current - totalLoaded);
+          const eta = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
+          setUploadTelemetry({
+            bytesUploaded: totalLoaded,
+            totalBytes: totalTargetBytesRef.current,
+            speedBps: speed,
+            etaSeconds: eta,
+            isActive: true
+          });
+        }
+      );
+      completedUploadBytesRef.current += local.file.size;
+      activeUploadBytesRef.current.delete(statusItem.job_id);
       applyStatus(currentStatus);
       statusItem = currentStatus.items.find((item) => item.job_id === statusItem.job_id) || statusItem;
     }
@@ -267,6 +321,22 @@ export default function BulkIngestionWorkspace({
   }, [adminToken, applyStatus, onNotice]);
 
   const processItems = async (status: IngestionBatchStatus) => {
+    const pendingUploads = status.items.filter((item) => item.upload_state !== "uploaded");
+    const totalUploadBytes = pendingUploads.reduce((sum, it) => sum + (it.byte_size || 0), 0);
+    completedUploadBytesRef.current = 0;
+    activeUploadBytesRef.current.clear();
+    uploadStartTimeRef.current = Date.now();
+    totalTargetBytesRef.current = totalUploadBytes;
+    if (totalUploadBytes > 0) {
+      setUploadTelemetry({
+        bytesUploaded: 0,
+        totalBytes: totalUploadBytes,
+        speedBps: 0,
+        etaSeconds: 0,
+        isActive: true
+      });
+    }
+
     const pending = status.items.filter((item) => item.state !== "human_ready");
     await runBounded(pending, async (item) => {
       try {
@@ -275,6 +345,7 @@ export default function BulkIngestionWorkspace({
         onNotice(error instanceof Error ? error.message : `Could not process ${item.original_filename}.`);
       }
     });
+    setUploadTelemetry((prev) => ({ ...prev, isActive: false }));
     const latest = await refreshBatch(status.batch.id).catch(() => null);
     if (latest?.batch.status === "complete") {
       onNotice(`Batch complete. ${latest.batch.ready_items} images are ready for human curation.`);
@@ -373,13 +444,52 @@ export default function BulkIngestionWorkspace({
         <div>
           <p className="bulk-kicker">PHASE 4 / DURABLE INTAKE</p>
           <h3 id="bulk-ingestion-heading">Bulk Add Memes</h3>
-          <p className="bulk-description">Review image files first. Upload creates private archived metadata, then both advisory AI evaluations must succeed before human curation can see the item.</p>
+          <p className="bulk-description">Review image files first. Upload creates private draft metadata, then both advisory AI evaluations must succeed before the item is promoted to archived and unlocked for human curation.</p>
         </div>
         <div className="bulk-limits" aria-label="Bulk intake limits">
           <strong>{items.length}/{BULK_MAX_ITEMS}</strong>
           <span>{formatBytes(totalBytes)} / {formatBytes(BULK_MAX_BATCH_BYTES)}</span>
+          {batchStatus?.storage_usage && (
+            <span style={{ fontSize: "11px", color: "var(--tertiary, #00bb77)", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "4px" }} title="R2 Storage Utilization calculated from D1 intake metadata">
+              📦 R2: {formatBytes(batchStatus.storage_usage.total_bytes)} ({batchStatus.storage_usage.total_files} items)
+            </span>
+          )}
         </div>
       </div>
+
+      {uploadTelemetry.isActive && (
+        <div
+          className="bulk-telemetry-bar brutalist-border-sm"
+          style={{
+            margin: "12px 0",
+            padding: "10px 14px",
+            background: "var(--surface-container-high, #1e1e1e)",
+            color: "var(--on-surface, #fff)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "8px",
+            fontSize: "12px",
+            fontFamily: "monospace",
+            borderLeft: "6px solid var(--primary, #00f0ff)"
+          }}
+          role="status"
+          aria-live="polite"
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span className="material-symbols-outlined" style={{ fontSize: "16px", color: "var(--primary, #00f0ff)" }}>bolt</span>
+            <strong>UPLOAD SPEED:</strong> {formatSpeed(uploadTelemetry.speedBps)}
+          </div>
+          <div>
+            <strong>BANDWIDTH:</strong> {formatBytes(uploadTelemetry.bytesUploaded)} / {formatBytes(uploadTelemetry.totalBytes)} (
+            {uploadTelemetry.totalBytes > 0 ? Math.round((uploadTelemetry.bytesUploaded / uploadTelemetry.totalBytes) * 100) : 0}%)
+          </div>
+          <div style={{ color: "var(--secondary, #ffe600)", fontWeight: 700 }}>
+            <strong>ETA:</strong> {formatEta(uploadTelemetry.etaSeconds)}
+          </div>
+        </div>
+      )}
 
       {!backendMode && (
         <div className="bulk-blocked" role="status">Connect backend mode to create a durable batch. Local draft mode does not upload bulk files.</div>

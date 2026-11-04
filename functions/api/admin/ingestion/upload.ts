@@ -36,7 +36,7 @@ const ensurePrivateMeme = async (env: Env, job: IngestionJobRow) => {
       id, title, image_url, storage_path, source_link, category, tags,
       rarity, status, media_type, input_method, is_active, rights_note,
       share_text, random_key, uploaded_at
-    ) VALUES (?, ?, NULL, ?, ?, 'Unsorted', '[]', 'Common', 'archived', 'image', 'upload', 0, 'reviewed', ?, ?, ?)
+    ) VALUES (?, ?, NULL, ?, ?, 'Unsorted', '[]', 'Common', 'draft', 'image', 'upload', 0, 'reviewed', ?, ?, ?)
   `).bind(
     job.meme_id,
     job.title,
@@ -50,9 +50,9 @@ const ensurePrivateMeme = async (env: Env, job: IngestionJobRow) => {
   const result = await env.DB.prepare(`
     UPDATE memes
     SET title = ?, image_url = NULL, storage_path = ?, source_link = ?,
-        status = 'archived', media_type = 'image', input_method = 'upload',
+        status = 'draft', media_type = 'image', input_method = 'upload',
         is_active = 0, rights_note = 'reviewed', share_text = ?
-    WHERE id = ? AND status = 'archived' AND is_active = 0
+    WHERE id = ? AND is_active = 0
   `).bind(
     job.title,
     job.storage_path,

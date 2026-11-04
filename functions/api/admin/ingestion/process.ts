@@ -421,6 +421,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
             next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
         WHERE job_id = ?
       `).bind(new Date().toISOString(), new Date().toISOString(), jobId).run();
+
+      // Promote private meme from draft to archived with curation_status = NULL now that both advisory AI evaluations succeeded
+      await env.DB.prepare(`
+        UPDATE memes
+        SET status = 'archived', is_active = 0, curation_status = NULL
+        WHERE id = ? AND status = 'draft'
+      `).bind(job.meme_id).run();
+
       const preview = finalRows.find((evaluation) => evaluation.judge_key === "judge4") || finalRows[0];
       if (preview) await writeLegacyAdvisoryPreview(env, job, preview);
     } else {

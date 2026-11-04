@@ -18,7 +18,6 @@ bucket_name = "memes"
 binding = "ANALYTICS_KV"
 id = "078fce53803845b3a47751baef405341"
 
-# Cron trigger for analytics aggregation worker
-# Uncomment after deploying the worker separately
+# Cron triggers for background automation (analytics aggregation & Google Drive intake)
 # [triggers]
-# crons = ["*/30 * * * *"]
+# crons = ["*/15 * * * *"] # Drive Intake: /api/admin/ingestion/drive-cron

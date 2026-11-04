@@ -535,7 +535,7 @@ export default function AdminApp() {
   const editMeme = useCallback((meme: AdminMeme) => {
     setEditingOriginalId(meme.id);
     setForm(toFormState(meme));
-    setActiveTab("add");
+    setActiveTab("vault");
     setIsMobileNavOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -908,18 +908,19 @@ export default function AdminApp() {
               <PushNotifications adminToken={adminToken} />
               <ScheduledNotifications adminToken={adminToken} />
             </div>
+          ) : activeTab === "add" ? (
+            <div className="single-pane add-meme-layout">
+              <BulkIngestionWorkspace
+                adminToken={adminToken}
+                backendMode={backendMode}
+                onNotice={setNotice}
+                onBackendChanged={loadBackend}
+              />
+            </div>
           ) : (
-            <div className={`split-pane ${activeTab === "add" ? "add-meme-layout" : ""}`}>
-              {activeTab === "add" && (
-                <BulkIngestionWorkspace
-                  adminToken={adminToken}
-                  backendMode={backendMode}
-                  onNotice={setNotice}
-                  onBackendChanged={loadBackend}
-                />
-              )}
+            <div className={`split-pane ${editingOriginalId ? "" : "vault-single-pane"}`}>
               {/* LEFT PANE - VAULT */}
-              {activeTab === "vault" && <section className="left-pane">
+              <section className="left-pane">
                 <div className="pane-header" style={{ flexDirection: "column", gap: "12px", alignItems: "stretch" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -1262,183 +1263,177 @@ export default function AdminApp() {
                     </button>
                   </div>
                 )}
-              </section>}
+              </section>
 
-              {/* RIGHT PANE - EDITOR */}
-              <section className="right-pane brutalist-border brutalist-shadow-black-lg">
-                {editingOriginalId && <div className="edit-mode-tag brutalist-border-sm">EDIT MODE</div>}
-                <h3>{editingOriginalId ? "Edit Meme" : "Add Meme"}</h3>
+              {/* RIGHT PANE - EDITOR (ONLY WHEN EDITING AN EXISTING MEME) */}
+              {editingOriginalId && (
+                <section className="right-pane brutalist-border brutalist-shadow-black-lg">
+                  <div className="edit-mode-tag brutalist-border-sm">EDIT MODE</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                    <h3 style={{ margin: 0 }}>Edit Meme</h3>
+                    <button
+                      type="button"
+                      className="brutalist-border-sm"
+                      onClick={resetForm}
+                      style={{ padding: "4px 10px", background: "var(--surface)", color: "var(--on-surface)", fontWeight: 700, cursor: "pointer" }}
+                    >
+                      ✕ CANCEL
+                    </button>
+                  </div>
 
-                <form onSubmit={handleSubmit}>
-                  <div className="form-group">
-                    <label>Media Asset</label>
-                    <div className="media-zone">
-                      <label className="file-dropzone">
-                        <span className="material-symbols-outlined">upload_file</span>
-                        <span>{isSyncing && syncActionName.includes("Upload") ? "UPLOADING..." : "DROP FILE HERE"}</span>
-                        <input accept="image/*,video/*" type="file" onChange={handleFileUpload} disabled={isSyncing} />
-                      </label>
-                      <div className="url-zone">
-                        <div className="form-group" style={{ marginBottom: 0 }}>
-                          <label style={{ color: "var(--outline)", fontSize: "10px" }}>Media URL</label>
-                          <input
-                            className="brutalist-input"
-                            style={{ fontFamily: "monospace" }}
-                            value={form.url}
-                            onChange={(e) => handleUrlInput(e.target.value.includes("drive.google") ? "google-drive" : "url", e.target.value)}
-                            placeholder="https://..."
-                          />
-                        </div>
-                        {form.url && (
-                          <div style={{ marginTop: "auto", display: "flex", justifyContent: "center" }}>
-                            {form.media_type === "video" ? (
-                              <video controls src={form.url} style={{ maxHeight: "100px", border: "2px solid var(--outline-variant)" }} />
-                            ) : (
-                              <img src={form.url} alt="Preview" style={{ maxHeight: "100px", border: "2px solid var(--outline-variant)" }} />
-                            )}
+                  <form onSubmit={handleSubmit}>
+                    {/* Media Preview (Read-only; legacy single-item upload portal removed) */}
+                    {form.url && (
+                      <div className="form-group">
+                        <label>Current Media</label>
+                        <div style={{ display: "flex", alignItems: "center", gap: "12px", background: "var(--surface-container-low)", padding: "10px", border: "2px solid var(--outline-variant)" }}>
+                          {form.media_type === "video" ? (
+                            <video controls src={form.url} style={{ maxHeight: "90px", maxWidth: "120px", border: "1px solid black" }} />
+                          ) : (
+                            <img src={form.url} alt="Preview" style={{ maxHeight: "90px", maxWidth: "120px", objectFit: "contain", border: "1px solid black" }} />
+                          )}
+                          <div style={{ fontSize: "11px", wordBreak: "break-all", color: "var(--on-surface-variant)" }}>
+                            <strong>{form.storage_path || form.url}</strong>
+                            <br />
+                            <small style={{ color: "var(--outline)", fontSize: "10px" }}>Canonical media can be visually modified in curation via the Image Editor.</small>
                           </div>
-                        )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="metadata-grid">
+                      <div className="form-group col-span-2">
+                        <label>Title</label>
+                        <input
+                          className="brutalist-input"
+                          style={{ fontFamily: "var(--font-display)", fontSize: "20px", textTransform: "uppercase" }}
+                          value={form.title}
+                          onChange={(e) => updateForm("title", e.target.value)}
+                          placeholder="Exam week survival"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Category</label>
+                        <input
+                          className="brutalist-input"
+                          style={{ textTransform: "uppercase", fontWeight: 700 }}
+                          value={form.category}
+                          onChange={(e) => updateForm("category", e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Status</label>
+                        <select
+                          className="brutalist-input"
+                          style={{ textTransform: "uppercase", fontWeight: 700, color: "var(--secondary)" }}
+                          value={form.status}
+                          onChange={(e) => updateForm("status", e.target.value as MemeStatus)}
+                        >
+                          <option
+                            value="active"
+                            disabled={backendMode && Boolean(editingOriginalId) && !(collection.find((m) => m.id === editingOriginalId) as unknown as { is_finalized_keep?: boolean })?.is_finalized_keep}
+                          >
+                            Active {backendMode && Boolean(editingOriginalId) && !(collection.find((m) => m.id === editingOriginalId) as unknown as { is_finalized_keep?: boolean })?.is_finalized_keep ? "(Requires Superadmin Finalization)" : ""}
+                          </option>
+                          <option value="draft">Draft</option>
+                          <option value="archived">Archived</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label>Rarity</label>
+                        <select
+                          className="brutalist-input"
+                          style={{ textTransform: "uppercase", fontWeight: 700, color: "var(--tertiary-container)" }}
+                          value={form.rarity}
+                          onChange={(e) => updateForm("rarity", e.target.value as Rarity)}
+                        >
+                          <option value="Common">Common</option>
+                          <option value="Rare">Rare</option>
+                          <option value="Legendary">Legendary</option>
+                          <option value="Mythic">Mythic</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label>Likes Count</label>
+                        <input
+                          type="number"
+                          className="brutalist-input"
+                          style={{ fontFamily: "monospace" }}
+                          value={form.likes_count ?? 0}
+                          onChange={(e) => updateForm("likes_count", Number(e.target.value))}
+                        />
                       </div>
                     </div>
-                  </div>
 
-                  <div className="metadata-grid">
-                    <div className="form-group col-span-2">
-                      <label>Title</label>
-                      <input
-                        className="brutalist-input"
-                        style={{ fontFamily: "var(--font-display)", fontSize: "20px", textTransform: "uppercase" }}
-                        value={form.title}
-                        onChange={(e) => updateForm("title", e.target.value)}
-                        placeholder="Exam week survival"
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Category</label>
-                      <input
-                        className="brutalist-input"
-                        style={{ textTransform: "uppercase", fontWeight: 700 }}
-                        value={form.category}
-                        onChange={(e) => updateForm("category", e.target.value)}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Status</label>
-                      <select
-                        className="brutalist-input"
-                        style={{ textTransform: "uppercase", fontWeight: 700, color: "var(--secondary)" }}
-                        value={form.status}
-                        onChange={(e) => updateForm("status", e.target.value as MemeStatus)}
-                      >
-                        <option
-                          value="active"
-                          disabled={backendMode && Boolean(editingOriginalId) && !(collection.find((m) => m.id === editingOriginalId) as unknown as { is_finalized_keep?: boolean })?.is_finalized_keep}
-                        >
-                          Active {backendMode && Boolean(editingOriginalId) && !(collection.find((m) => m.id === editingOriginalId) as unknown as { is_finalized_keep?: boolean })?.is_finalized_keep ? "(Requires Superadmin Finalization)" : ""}
-                        </option>
-                        <option value="draft">Draft</option>
-                        <option value="archived">Archived</option>
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label>Rarity</label>
-                      <select
-                        className="brutalist-input"
-                        style={{ textTransform: "uppercase", fontWeight: 700, color: "var(--tertiary-container)" }}
-                        value={form.rarity}
-                        onChange={(e) => updateForm("rarity", e.target.value as Rarity)}
-                      >
-                        <option value="Common">Common</option>
-                        <option value="Rare">Rare</option>
-                        <option value="Legendary">Legendary</option>
-                        <option value="Mythic">Mythic</option>
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label>Likes Count</label>
-                      <input
-                        type="number"
-                        className="brutalist-input"
-                        style={{ fontFamily: "monospace" }}
-                        value={form.likes_count ?? 0}
-                        onChange={(e) => updateForm("likes_count", Number(e.target.value))}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="advanced-toggle">
-                    <details className="group cursor-pointer">
-                      <summary className="advanced-summary" onClick={(e) => {
-                        e.preventDefault();
-                        setShowAdvanced(!showAdvanced);
-                      }}>
-                        <span className="material-symbols-outlined" style={{ transform: showAdvanced ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>chevron_right</span>
-                        Advanced Options
-                      </summary>
-                      {showAdvanced && (
-                        <div className="advanced-content brutalist-border-sm">
-                          <div className="form-group">
-                            <label style={{ color: "var(--outline)", fontSize: "10px" }}>Meme ID {editingOriginalId ? "(Immutable)" : ""}</label>
-                            <input
-                              className="brutalist-input"
-                              value={form.id}
-                              readOnly={Boolean(editingOriginalId)}
-                              disabled={Boolean(editingOriginalId)}
-                              style={{ opacity: editingOriginalId ? 0.7 : 1, cursor: editingOriginalId ? "not-allowed" : "text" }}
-                              onChange={(e) => updateForm("id", e.target.value)}
-                            />
-                            {editingOriginalId && (
+                    <div className="advanced-toggle">
+                      <details className="group cursor-pointer">
+                        <summary className="advanced-summary" onClick={(e) => {
+                          e.preventDefault();
+                          setShowAdvanced(!showAdvanced);
+                        }}>
+                          <span className="material-symbols-outlined" style={{ transform: showAdvanced ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>chevron_right</span>
+                          Advanced Options
+                        </summary>
+                        {showAdvanced && (
+                          <div className="advanced-content brutalist-border-sm">
+                            <div className="form-group">
+                              <label style={{ color: "var(--outline)", fontSize: "10px" }}>Meme ID (Immutable)</label>
+                              <input
+                                className="brutalist-input"
+                                value={form.id}
+                                readOnly
+                                disabled
+                                style={{ opacity: 0.7, cursor: "not-allowed" }}
+                              />
                               <span style={{ fontSize: "10px", color: "var(--outline)", display: "block", marginTop: "4px" }}>
                                 🔒 Meme ID is immutable and cannot be changed through ordinary editing.
                               </span>
-                            )}
+                            </div>
+                            <div className="form-group">
+                              <label style={{ color: "var(--outline)", fontSize: "10px" }}>Tags (Comma separated)</label>
+                              <input className="brutalist-input" value={form.tags} onChange={(e) => updateForm("tags", e.target.value)} />
+                            </div>
+                            <div className="form-group">
+                              <label style={{ color: "var(--outline)", fontSize: "10px" }}>Storage Path</label>
+                              <input className="brutalist-input" value={form.storage_path || ""} onChange={(e) => updateForm("storage_path", e.target.value)} />
+                            </div>
+                            <div className="form-group">
+                              <label style={{ color: "var(--outline)", fontSize: "10px" }}>Share Text</label>
+                              <input className="brutalist-input" value={form.share_text} onChange={(e) => updateForm("share_text", e.target.value)} />
+                            </div>
+                            <div className="form-group">
+                              <label style={{ color: "var(--outline)", fontSize: "10px" }}>Rights Note</label>
+                              <input className="brutalist-input" value={form.rights_note} onChange={(e) => updateForm("rights_note", e.target.value)} />
+                            </div>
+                            <button type="button" onClick={exportCollection} className="btn-clear brutalist-border-sm" style={{ padding: "8px", color: "var(--primary)", borderColor: "var(--primary)", marginTop: "8px", width: "fit-content" }}>
+                              Export JSON
+                            </button>
                           </div>
-                          <div className="form-group">
-                            <label style={{ color: "var(--outline)", fontSize: "10px" }}>Tags (Comma separated)</label>
-                            <input className="brutalist-input" value={form.tags} onChange={(e) => updateForm("tags", e.target.value)} />
-                          </div>
-                          <div className="form-group">
-                            <label style={{ color: "var(--outline)", fontSize: "10px" }}>Storage Path</label>
-                            <input className="brutalist-input" value={form.storage_path || ""} onChange={(e) => updateForm("storage_path", e.target.value)} />
-                          </div>
-                          <div className="form-group">
-                            <label style={{ color: "var(--outline)", fontSize: "10px" }}>Share Text</label>
-                            <input className="brutalist-input" value={form.share_text} onChange={(e) => updateForm("share_text", e.target.value)} />
-                          </div>
-                          <div className="form-group">
-                            <label style={{ color: "var(--outline)", fontSize: "10px" }}>Rights Note</label>
-                            <input className="brutalist-input" value={form.rights_note} onChange={(e) => updateForm("rights_note", e.target.value)} />
-                          </div>
-                          <button type="button" onClick={exportCollection} className="btn-clear brutalist-border-sm" style={{ padding: "8px", color: "var(--primary)", borderColor: "var(--primary)", marginTop: "8px", width: "fit-content" }}>
-                            Export JSON
-                          </button>
-                        </div>
-                      )}
-                    </details>
-                  </div>
+                        )}
+                      </details>
+                    </div>
 
-                  <div className="form-actions">
-                    <button
-                      type="submit"
-                      disabled={isSyncing}
-                      className="btn-primary brutalist-border brutalist-shadow-black brutalist-interactive"
-                      style={{
-                        opacity: isSyncing ? 0.7 : 1,
-                        cursor: isSyncing ? "wait" : "pointer"
-                      }}
-                    >
-                      {isSyncing && syncActionName.includes("Saving")
-                        ? "Saving..."
-                        : editingOriginalId
-                        ? "Save Changes"
-                        : "Save Meme"}
-                    </button>
-                    <button type="button" className="btn-clear brutalist-border-sm" onClick={resetForm} disabled={isSyncing}>
-                      Clear
-                    </button>
-                  </div>
-                </form>
-              </section>
+                    <div className="form-actions">
+                      <button
+                        type="submit"
+                        disabled={isSyncing}
+                        className="btn-primary brutalist-border brutalist-shadow-black brutalist-interactive"
+                        style={{
+                          opacity: isSyncing ? 0.7 : 1,
+                          cursor: isSyncing ? "wait" : "pointer"
+                        }}
+                      >
+                        {isSyncing && syncActionName.includes("Saving")
+                          ? "Saving..."
+                          : "Save Changes"}
+                      </button>
+                      <button type="button" className="btn-clear brutalist-border-sm" onClick={resetForm} disabled={isSyncing}>
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                </section>
+              )}
             </div>
           )}
         </div>
