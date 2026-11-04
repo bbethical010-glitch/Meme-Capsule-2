@@ -13,7 +13,12 @@ const SUPPORTED_IMAGE_TYPES = new Set([
   "image/gif",
   "image/jpeg",
   "image/png",
-  "image/webp"
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/heic-sequence",
+  "image/heif-sequence",
+  "image/bmp"
 ]);
 
 export type IngestionBatchRow = {
@@ -165,8 +170,24 @@ export const detectImageMime = (bytes: Uint8Array): string | null => {
     if (riff === "RIFF" && webp === "WEBP") return "image/webp";
   }
   if (bytes.length >= 12) {
-    const brand = new TextDecoder().decode(bytes.slice(4, 12));
-    if (brand.startsWith("ftyp") && (brand.includes("avif") || brand.includes("avis"))) return "image/avif";
+    const boxType = new TextDecoder().decode(bytes.slice(4, 8));
+    if (boxType === "ftyp") {
+      const brandHeader = new TextDecoder().decode(bytes.slice(8, Math.min(bytes.length, 32))).toLowerCase();
+      if (brandHeader.includes("avif") || brandHeader.includes("avis")) return "image/avif";
+      if (
+        brandHeader.includes("heic") ||
+        brandHeader.includes("heix") ||
+        brandHeader.includes("hevc") ||
+        brandHeader.includes("hevx") ||
+        brandHeader.includes("mif1") ||
+        brandHeader.includes("msf1")
+      ) {
+        return "image/heic";
+      }
+    }
+  }
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    return "image/bmp";
   }
   return null;
 };
@@ -224,10 +245,14 @@ export const getBatchStatus = async (env: Env, batchId: string): Promise<Ingesti
   const evaluations = new Map<string, IngestionEvaluationRow[]>();
 
   if (jobs.length > 0) {
-    const placeholders = jobs.map(() => "?").join(",");
-    const evaluationResult = await env.DB.prepare(
-      `SELECT * FROM ingestion_ai_evaluations WHERE job_id IN (${placeholders}) ORDER BY judge_key ASC`
-    ).bind(...jobs.map((job) => job.job_id)).all<IngestionEvaluationRow>();
+    // Single parameter query via JOIN eliminates SQLite variable limit errors (e.g. batches with 100+ items)
+    const evaluationResult = await env.DB.prepare(`
+      SELECT e.*
+      FROM ingestion_ai_evaluations e
+      JOIN ingestion_jobs j ON e.job_id = j.job_id
+      WHERE j.batch_id = ?
+      ORDER BY e.judge_key ASC
+    `).bind(batchId).all<IngestionEvaluationRow>();
     for (const evaluation of evaluationResult.results || []) {
       const existing = evaluations.get(evaluation.job_id) || [];
       existing.push(evaluation);

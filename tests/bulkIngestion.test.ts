@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   BULK_MAX_BATCH_BYTES,
   canConfirmBulk,
+  createBulkDraftItem,
   formatBytes,
   sha256File,
+  sniffImageMime,
   validateBulkFile,
   type BulkDraftItem
 } from "../src/admin/bulkIngestion";
@@ -13,13 +15,57 @@ const file = (overrides: Partial<File> = {}) => ({
   type: "image/png",
   size: 5,
   arrayBuffer: async () => new TextEncoder().encode("hello").buffer,
+  slice: (start = 0, end = 32) => ({
+    arrayBuffer: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).buffer
+  }),
   ...overrides
-}) as File;
+}) as unknown as File;
 
 describe("bulk ingestion client validation", () => {
-  it("accepts supported images and rejects video", () => {
+  it("accepts supported images including HEIC/HEIF and rejects video", () => {
     expect(validateBulkFile(file())).toEqual([]);
+    expect(validateBulkFile(file({ name: "photo.heic", type: "image/heic" }))).toEqual([]);
+    expect(validateBulkFile(file({ name: "photo.heif", type: "image/heif" }))).toEqual([]);
     expect(validateBulkFile(file({ name: "clip.mp4", type: "video/mp4" }))).toContain("Video is not supported in bulk intake.");
+  });
+
+  it("sniffs magic bytes correctly across common and modern image formats", () => {
+    // PNG
+    expect(sniffImageMime(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe("image/png");
+    // JPEG
+    expect(sniffImageMime(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]))).toBe("image/jpeg");
+    // GIF
+    expect(sniffImageMime(new TextEncoder().encode("GIF89a..."))).toBe("image/gif");
+    // WebP
+    const webpBytes = new Uint8Array(16);
+    new TextEncoder().encodeInto("RIFF", webpBytes.subarray(0, 4));
+    new TextEncoder().encodeInto("WEBP", webpBytes.subarray(8, 12));
+    expect(sniffImageMime(webpBytes)).toBe("image/webp");
+    // AVIF
+    const avifBytes = new Uint8Array(16);
+    new TextEncoder().encodeInto("ftypavif", avifBytes.subarray(4, 12));
+    expect(sniffImageMime(avifBytes)).toBe("image/avif");
+    // HEIC
+    const heicBytes = new Uint8Array(16);
+    new TextEncoder().encodeInto("ftypheic", heicBytes.subarray(4, 12));
+    expect(sniffImageMime(heicBytes)).toBe("image/heic");
+    // HEIF (mif1 brand)
+    const heifBytes = new Uint8Array(16);
+    new TextEncoder().encodeInto("ftypmif1", heifBytes.subarray(4, 12));
+    expect(sniffImageMime(heifBytes)).toBe("image/heic");
+  });
+
+  it("recovers MIME type from magic bytes when browser reports application/octet-stream", async () => {
+    const heicRaw = new Uint8Array(32);
+    new TextEncoder().encodeInto("ftypheic", heicRaw.subarray(4, 12));
+    const mobileExportFile = new File([heicRaw], "t51.82787-15_790865841_1801254463194", {
+      type: "application/octet-stream"
+    });
+
+    // Must be detected as image/heic with NO validation errors
+    const draft = await createBulkDraftItem(mobileExportFile);
+    expect(draft.mimeType).toBe("image/heic");
+    expect(draft.validationErrors).toEqual([]);
   });
 
   it("rejects oversized files before batch confirmation", () => {

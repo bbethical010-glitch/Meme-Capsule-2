@@ -112,6 +112,7 @@ export default function BulkIngestionWorkspace({
   const [isDragging, setIsDragging] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [brokenPreviews, setBrokenPreviews] = useState<Set<string>>(new Set());
   const [uploadTelemetry, setUploadTelemetry] = useState<{
     bytesUploaded: number;
     totalBytes: number;
@@ -491,6 +492,7 @@ export default function BulkIngestionWorkspace({
       setItems([]);
       setBatchId(null);
       setBatchStatus(null);
+      setBrokenPreviews(new Set());
       saveSession(null, []);
       setUploadTelemetry({
         bytesUploaded: 0,
@@ -516,6 +518,7 @@ export default function BulkIngestionWorkspace({
     setItems([]);
     setBatchId(null);
     setBatchStatus(null);
+    setBrokenPreviews(new Set());
     setUploadTelemetry({
       bytesUploaded: 0,
       totalBytes: 0,
@@ -609,13 +612,13 @@ export default function BulkIngestionWorkspace({
       >
         <span className="material-symbols-outlined" aria-hidden="true">photo_library</span>
         <strong>{submitted ? `BATCH ${batchId}` : "DROP IMAGES HERE"}</strong>
-        <span>{submitted ? "This batch is active; start a new batch or review uploaded items below." : "or choose multiple PNG, JPEG, GIF, WebP, or AVIF files"}</span>
+        <span>{submitted ? "This batch is active; start a new batch or review uploaded items below." : "or choose multiple PNG, JPEG, GIF, WebP, AVIF, or HEIC files"}</span>
         {(!submitted || items.some((item) => item.server && item.server.upload_state !== "uploaded")) && (
           <button type="button" className="brutalist-border-sm bulk-choose-button" onClick={() => inputRef.current?.click()}>
             {submitted ? "Re-select pending files" : "Choose images"}
           </button>
         )}
-        <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple hidden onChange={(event) => { void addFiles(event.target.files || []); event.target.value = ""; }} />
+        <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/heic,image/heif,.heic,.heif,.bmp" multiple hidden onChange={(event) => { void addFiles(event.target.files || []); event.target.value = ""; }} />
       </div>
 
       {isRestoring && <p className="bulk-progress-note">Restoring saved server progress…</p>}
@@ -633,12 +636,31 @@ export default function BulkIngestionWorkspace({
           {items.map((item) => (
             <article className="bulk-review-row" key={item.clientItemId}>
               <div className="bulk-file-cell">
-                {item.previewUrl ? <img src={item.previewUrl} alt="" /> : <div className="bulk-no-preview" aria-hidden="true">IMG</div>}
-                <div><strong title={item.fileName}>{item.fileName}</strong><small>{item.contentHash.slice(0, 16)}…</small></div>
+                {item.previewUrl && !brokenPreviews.has(item.clientItemId) ? (
+                  <img
+                    src={item.previewUrl}
+                    alt=""
+                    onError={() => setBrokenPreviews((prev) => new Set(prev).add(item.clientItemId))}
+                  />
+                ) : (
+                  <div className="bulk-no-preview" aria-hidden="true" title={item.mimeType}>
+                    {item.mimeType.includes("heic") || item.mimeType.includes("heif") ? "HEIC" : "IMG"}
+                  </div>
+                )}
+                <div className="bulk-file-cell-info">
+                  <strong title={item.fileName}>{item.fileName}</strong>
+                  <small title={item.contentHash}>{item.contentHash.slice(0, 16)}…</small>
+                </div>
               </div>
               <label className="bulk-title-cell">
                 <span className="sr-only">Title for {item.fileName}</span>
-                <input className="brutalist-input" value={item.title} disabled={submitted} onChange={(event) => updateTitle(item.clientItemId, event.target.value)} />
+                <input
+                  className="brutalist-input"
+                  title={item.title}
+                  value={item.title}
+                  disabled={submitted}
+                  onChange={(event) => updateTitle(item.clientItemId, event.target.value)}
+                />
               </label>
               <div className="bulk-meta-cell">
                 <strong>{formatBytes(item.byteSize)}</strong>

@@ -114,12 +114,24 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return json({ error: `File exceeds the ${INGESTION_MAX_FILE_BYTES / 1024 / 1024} MiB per-file limit.` }, { status: 400 });
     }
 
-    const declaredMime = (fileValue.type || job.mime_type || "").toLowerCase();
+    const declaredMime = (fileValue.type || job.mime_type || "").toLowerCase().trim();
     const sniffedMime = detectImageMime(bytes);
     const effectiveMime = sniffedMime || declaredMime;
-    if (!sniffedMime || !isSupportedImageType(effectiveMime) || (declaredMime && isSupportedImageType(declaredMime) && sniffedMime !== declaredMime)) {
+
+    // Normalize compatible MIME variants so heif/heic and jpg/jpeg are compatible
+    const normalizeImageMime = (m: string) => {
+      if (m === "image/jpg") return "image/jpeg";
+      if (m === "image/heif" || m === "image/heic-sequence" || m === "image/heif-sequence") return "image/heic";
+      return m;
+    };
+
+    const normDeclared = normalizeImageMime(declaredMime);
+    const normSniffed = sniffedMime ? normalizeImageMime(sniffedMime) : null;
+    const isMismatched = Boolean(normDeclared && isSupportedImageType(normDeclared) && normSniffed && normSniffed !== normDeclared);
+
+    if (!sniffedMime || !isSupportedImageType(effectiveMime) || isMismatched) {
       await markUploadFailure(env, jobId, "The file is not a supported image or its declared type does not match its contents.");
-      return json({ error: "Only valid PNG, JPEG, GIF, WebP, or AVIF images are accepted. Video is not supported." }, { status: 400 });
+      return json({ error: "Only valid PNG, JPEG, GIF, WebP, AVIF, HEIC, or HEIF images are accepted. Video is not supported." }, { status: 400 });
     }
 
     const actualHash = await sha256Hex(bytes);

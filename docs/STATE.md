@@ -404,5 +404,52 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
     - `node --test tests/curationConsensus.test.mjs` (9 tests passing)
   - Production build: `tsc && vite build` compiled 1,713 modules in 15s with code-split `ImageEditorModal` and zero errors.
 
+---
+
+## 15. Bulk Ingestion Scaling, Multi-Format HEIC Support & UI Layout Overhaul (November 4, 2026)
+
+- **1. SQLite Parameter Limit Fix (`functions/_shared/ingestion.ts`, `functions/api/admin/ingestion/batches.ts`)**:
+  - **The Bug**: When creating or reading batches with 100+ items (e.g. 190 items), `getBatchStatus` built `SELECT * FROM ingestion_ai_evaluations WHERE job_id IN (?, ?, ...)` binding 190 parameters, exceeding Cloudflare D1's limit of 100 bound parameters per query and crashing with `D1_ERROR: too many SQL variables at offset 256: SQLITE_ERROR`.
+  - **The Fix**: Replaced unbounded `IN (${placeholders})` list with a single-parameter indexed JOIN:
+    ```sql
+    SELECT e.*
+    FROM ingestion_ai_evaluations e
+    JOIN ingestion_jobs j ON e.job_id = j.job_id
+    WHERE j.batch_id = ?
+    ORDER BY e.judge_key ASC
+    ```
+  - Bounded statement chunk sizes to `STATEMENT_CHUNK_SIZE = 25` in `batches.ts` to ensure multi-statement D1 transactions remain strictly within engine parameter limits.
+
+- **2. Universal Modern Image Format Support (`src/admin/bulkIngestion.ts`, `functions/_shared/ingestion.ts`, `functions/api/admin/ingestion/upload.ts`)**:
+  - Added full support for **HEIC / HEIF** (`image/heic`, `image/heif`, `image/heic-sequence`, `image/heif-sequence`), as well as BMP (`image/bmp`).
+  - **Client-Side Magic Byte Sniffing**: Implemented `sniffImageMime` in `bulkIngestion.ts` reading header bytes (0-32). If a browser reports `application/octet-stream` or an empty MIME type (common on Windows/Chrome for mobile photos and Instagram/WhatsApp exports like `t51.82787-15_...`), the system inspects magic bytes (e.g. `ftypheic`, `ftypmif1`, `ftypmsf1`, `\xFF\xD8\xFF`, `\x89PNG`) and assigns the genuine MIME type before validation, eliminating false rejection errors.
+  - **Server-Side Compatibility**: Updated `detectImageMime` in `functions/_shared/ingestion.ts` to sniff HEIC/HEIF brands (`heic`, `heix`, `hevc`, `hevx`, `mif1`, `msf1`) and BMP (`BM`). Normalized MIME variants (`image/heif` ↔ `image/heic`, `image/jpg` ↔ `image/jpeg`) in `upload.ts` so compatible formats match smoothly.
+
+- **3. Review Table Layout Overhaul & Anti-Overlap Isolation (`src/admin/admin.css`, `src/admin/BulkIngestionWorkspace.tsx`)**:
+  - **The Bug**: Long unbroken filenames (e.g. Instagram CDN hashes) expanded flex children without `min-width: 0`, forcing the filename text past its column track and causing the Title input box to visually overlap and obscure the filename.
+  - **The Fix**:
+    - Wrapped filename and hash in a dedicated flex column `.bulk-file-cell-info` with `min-width: 0; flex: 1 1 auto; overflow: hidden;`.
+    - Set `display: block; min-width: 0; width: 100%;` on `.bulk-title-cell` and its child input.
+    - Added strict text truncation (`text-overflow: ellipsis; white-space: nowrap; overflow: hidden;`) with full tooltip inspection on hover (`title={item.fileName}`).
+    - Expanded CSS grid column tracks to `minmax(280px, 1.8fr) minmax(220px, 1.4fr) minmax(120px, 0.8fr) minmax(260px, 1.6fr) 80px` with a minimum table width of `980px` inside a horizontal scroll container (`overflow-x: auto;`), guaranteeing ample space for each column without compression or collision.
+
+- **4. Browser Preview Fallback for Non-Native Formats (`src/admin/BulkIngestionWorkspace.tsx`)**:
+  - Added `onError` fallback on preview images with a `brokenPreviews` state tracker.
+  - Formats without native browser `<img>` decoding (such as HEIC in Chrome on Windows) render a stylized, high-contrast Neo-Brutalist format badge (`HEIC`) instead of a broken browser icon.
+
+- **5. Strict Decoupling of Upload Completion vs AI Curation**:
+  - Upload status shows `✓ UPLOADED (DRAFT)` in emerald green once media is confirmed in R2 and D1.
+  - Background advisory evaluation for AI Judges 4 & 5 runs downstream without turning upload badges red or blocking batch completion.
+
+- **6. Verification & Automated Tests**:
+  - Extended `tests/bulkIngestion.test.ts` to 6 comprehensive tests, verifying HEIC/HEIF acceptance, magic byte sniffing across PNG, JPEG, GIF, WebP, AVIF, HEIC, HEIF, and recovery from `application/octet-stream`.
+  - All automated test suites passing:
+    - `npm run test:ingestion` (6 tests passing)
+    - `npm run test:vault` (5 tests passing)
+    - `npm run test:editor` (4 tests passing)
+    - `npm run test:analytics` (5 tests passing)
+  - Production build: `tsc && vite build` compiled 1,713 modules cleanly in 10.28s.
+
+
 
 

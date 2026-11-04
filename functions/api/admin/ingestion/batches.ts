@@ -232,7 +232,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       }
     }
 
-    const STATEMENT_CHUNK_SIZE = 40;
+    const STATEMENT_CHUNK_SIZE = 25;
     for (let i = 0; i < statements.length; i += STATEMENT_CHUNK_SIZE) {
       await env.DB.batch(statements.slice(i, i + STATEMENT_CHUNK_SIZE));
     }
