@@ -1086,6 +1086,95 @@
 .bulk-state.failed { background: #ff3b30; color: #fff; }
 .bulk-warning { color: #ffe08b !important; }
 .bulk-error { color: #ffb4ab !important; }
+
+/* Sticky Telemetry & Progress Bar */
+.bulk-telemetry-container {
+  margin: 14px 0;
+  padding: 12px 14px;
+  background: var(--surface-container-high, #1e1e1e);
+  color: var(--on-surface, #fff);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+  font-family: monospace;
+  border-left: 6px solid var(--primary, #00f0ff);
+  transition: border-color .2s ease;
+}
+.bulk-telemetry-container.is-complete {
+  border-left-color: var(--tertiary, #00bb77);
+  background: #112217;
+}
+.bulk-telemetry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.bulk-telemetry-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bulk-progress-track {
+  width: 100%;
+  height: 8px;
+  background: #000;
+  border: 1px solid #333;
+  overflow: hidden;
+  position: relative;
+}
+.bulk-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary, #00f0ff), var(--secondary, #ffe600));
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bulk-progress-fill.is-complete {
+  background: #00bb77;
+}
+
+/* Decoupled Item Badges */
+.bulk-badge-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+.bulk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 2px solid #000;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  width: fit-content;
+}
+.bulk-badge.badge-pending { background: #333; color: #ccc; }
+.bulk-badge.badge-uploading { background: var(--primary, #00f0ff); color: #000; }
+.bulk-badge.badge-uploaded { background: #00bb77; color: #000; }
+.bulk-badge.badge-failed { background: #ff3366; color: #fff; }
+
+.bulk-ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  border: 1px solid #444;
+  background: #1a1a1a;
+  color: #bbb;
+  text-transform: uppercase;
+}
+.bulk-ai-badge.ai-ready { border-color: #00f0ff; color: #00f0ff; }
+.bulk-ai-badge.ai-processing { border-color: #ffe600; color: #ffe600; }
+.bulk-ai-badge.ai-retry { border-color: #a855f7; color: #c084fc; }
+.bulk-ai-badge.ai-pending { border-color: #555; color: #888; }
+
 .bulk-ai-states { display: flex; flex-wrap: wrap; gap: 4px; color: var(--outline); font-size: 9px; text-transform: uppercase; }
 .bulk-item-actions { align-self: stretch; display: flex; align-items: center; justify-content: flex-end; }
 .bulk-remove-button { padding: 5px 7px; color: #ffb4ab; }

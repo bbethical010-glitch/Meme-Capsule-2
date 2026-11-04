@@ -1080,6 +1080,7 @@ export default function AdminApp() {
                 backendMode={backendMode}
                 onNotice={setNotice}
                 onBackendChanged={loadBackend}
+                onOpenVault={() => selectAdminView("vault")}
               />
             </div>
           ) : (

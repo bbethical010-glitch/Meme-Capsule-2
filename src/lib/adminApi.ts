@@ -63,8 +63,11 @@ export type IngestionBatchStatus = {
     status: string;
     total_items: number;
     total_bytes: number;
+    uploaded_items?: number;
+    upload_failed_items?: number;
     ready_items: number;
     failed_items: number;
+    ai_failed_items?: number;
     created_at: string;
     updated_at: string;
     completed_at: string | null;
