@@ -68,6 +68,23 @@ describe("bulk ingestion client validation", () => {
     expect(draft.validationErrors).toEqual([]);
   });
 
+  it("generates distinct, batch-scoped clientItemId and memeId while preserving contentHash", async () => {
+    const raw = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const file1 = new File([raw], "meme1.png", { type: "image/png" });
+    const file2 = new File([raw], "meme2.png", { type: "image/png" });
+
+    const draft1 = await createBulkDraftItem(file1);
+    const draft2 = await createBulkDraftItem(file2);
+
+    // Both files have identical bytes, so contentHash must match
+    expect(draft1.contentHash).toBe(draft2.contentHash);
+    // But clientItemId and memeId must be uniquely scoped to prevent D1 collisions
+    expect(draft1.clientItemId).not.toBe(draft2.clientItemId);
+    expect(draft1.memeId).not.toBe(draft2.memeId);
+    expect(draft1.clientItemId).toMatch(/^item-[a-f0-9]{20}-[a-z0-9]{8}$/i);
+    expect(draft1.memeId).toMatch(/^intake-[a-z0-9]{32}$/i);
+  });
+
   it("rejects oversized files before batch confirmation", () => {
     const errors = validateBulkFile(file({ size: 20 * 1024 * 1024 + 1 }));
     expect(errors).toContain("The file exceeds the 20 MiB limit.");

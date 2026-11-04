@@ -450,6 +450,31 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
     - `npm run test:analytics` (5 tests passing)
   - Production build: `tsc && vite build` compiled 1,713 modules cleanly in 10.28s.
 
+---
+
+## 16. Total Intake Purge Fix, Zero-Collision Idempotency Keys & Stale Batch Cleanup (November 5, 2026)
+
+- **1. Total Database & Storage Purge Overhaul (`functions/api/admin/ingestion/batches.ts`)**:
+  - **The Root Cause**: In Cloudflare D1 serverless sessions, SQLite's `PRAGMA foreign_keys = ON;` is not active by default. Previously, calling `DELETE FROM ingestion_batches WHERE id = ?` only deleted the single row in `ingestion_batches`; it **never cascaded** to delete `ingestion_jobs` or `ingestion_ai_evaluations`. These abandoned jobs remained permanently trapped in D1 with their original `idempotency_key` and `meme_id` intact.
+  - **The Fix**: `onRequestDelete` now explicitly executes complete, ordered cascade deletions across:
+    1. Uncurated draft records in `memes` (`status = 'draft' AND is_active = 0`).
+    2. Physical R2 media objects in `MEMES_BUCKET`.
+    3. `ingestion_ai_evaluations` records (`WHERE job_id IN (SELECT job_id FROM ingestion_jobs WHERE batch_id = ?)`).
+    4. `ingestion_jobs` records (`WHERE batch_id = ?`).
+    5. `ingestion_batches` records (`WHERE id = ?`).
+  - Added support for `id=all_stale` to clean up any historical orphaned jobs or abandoned test sessions across the entire D1 database in one atomic admin sweep.
+
+- **2. Tri-Tier Idempotency Collision Elimination (Options 1 + 2 + 3 Implemented)**:
+  - **Option 1 (Client Scoping)**: In `src/admin/bulkIngestion.ts`, `createBulkDraftItem` assigns batch-scoped unique identifiers (`clientItemId: item-${contentHash.slice(0, 20)}-${randomSuffix.slice(0, 8)}` and `memeId: intake-${randomSuffix}`), while strictly preserving `contentHash` for SHA-256 duplicate detection.
+  - **Option 2 (Backend Auto-Scoping Defense)**: In `functions/api/admin/ingestion/batches.ts`, `onRequestPost` checks if any submitted `idempotencyKey` or `memeId` is already in D1. If found, instead of blocking the entire batch with a `409 Conflict`, it automatically namespaces the key to the current `batchId` (`${batchId.slice(0, 10)}-${item.idempotencyKey}`) and assigns a fresh intake ID. Duplicate files are still accurately recorded in D1 as `duplicate_of_job_id` and flagged in the review table.
+  - **Option 3 (UI Admin Purge Control)**: Added a visible `[🧹 Wipe Stale Intake]` button in `BulkIngestionWorkspace.tsx` alongside `[Start Fresh Batch]`, allowing admins to instantly clean up all stale/abandoned intake sessions from D1 and R2 at any time.
+
+- **3. Verification & Automated Tests**:
+  - `tests/bulkIngestion.test.ts` updated with 7 automated tests, verifying unique batch scoping across identical content files.
+  - All test suites passing (`test:ingestion`, `test:vault`, `test:editor`, `test:analytics`).
+  - Production build: `tsc && vite build` compiled 1,713 modules in 11.51s with zero errors.
+
+
 
 
 

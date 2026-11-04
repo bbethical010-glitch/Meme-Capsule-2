@@ -511,6 +511,23 @@ export default function BulkIngestionWorkspace({
     }
   };
 
+  const purgeAllStaleBatches = async () => {
+    if (!adminToken.trim()) return;
+    if (!window.confirm("Purge all stale and incomplete intake batches from D1 and R2? This completely wipes abandoned drafts and resets the database intake tables.")) {
+      return;
+    }
+    setIsWorking(true);
+    try {
+      const res = await deleteIngestionBatch(adminToken, "all_stale");
+      onNotice(`✓ Cleared ${res.purged_jobs_count || 0} orphaned/stale intake jobs across D1.`);
+      await onBackendChanged();
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : "Failed to purge stale batches.");
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
   const startNewBatch = () => {
     items.forEach((item) => {
       if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
@@ -542,7 +559,7 @@ export default function BulkIngestionWorkspace({
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-          {submitted && (
+          {submitted ? (
             <button
               type="button"
               className="brutalist-border-sm bulk-secondary-button"
@@ -551,6 +568,16 @@ export default function BulkIngestionWorkspace({
               title="Clear current session and start a brand new upload batch"
             >
               Start Fresh Batch
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="brutalist-border-sm bulk-secondary-button"
+              style={{ fontSize: "11px", padding: "4px 8px", color: "var(--danger, #ff3366)" }}
+              onClick={() => void purgeAllStaleBatches()}
+              title="Purge all incomplete or orphaned intake batches from D1 and R2"
+            >
+              🧹 Wipe Stale Intake
             </button>
           )}
           <div className="bulk-limits" aria-label="Bulk intake limits">

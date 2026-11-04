@@ -137,9 +137,10 @@ export const createBulkDraftItem = async (file: File): Promise<BulkDraftItem> =>
   }
 
   const validationErrors = validateBulkFile(file, mimeType);
+  const randomSuffix = crypto.randomUUID().replace(/-/g, "");
   return {
-    clientItemId: `item-${contentHash}`,
-    memeId: `intake-${contentHash.slice(0, 32)}`,
+    clientItemId: `item-${contentHash.slice(0, 20)}-${randomSuffix.slice(0, 8)}`,
+    memeId: `intake-${randomSuffix}`,
     file,
     fileName: file.name,
     title: defaultBulkTitle(file.name),
