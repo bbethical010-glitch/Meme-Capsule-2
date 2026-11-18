@@ -159,3 +159,40 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     return handleD1Error(error, "Failed to store notification content file");
   }
 };
+
+export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
+  const authError = requireAdmin(request, env);
+  if (authError) return authError;
+  let payload: { id?: string };
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const id = payload.id?.trim();
+  if (!id) return json({ error: "id is required" }, { status: 400 });
+
+  try {
+    const file = await env.DB.prepare(
+      "SELECT id, file_name, storage_path FROM notification_content_files WHERE id = ?"
+    ).bind(id).first<{ id: string; file_name: string; storage_path: string }>();
+    if (!file) return json({ error: "Content file not found" }, { status: 404 });
+
+    const activeReference = await env.DB.prepare(
+      "SELECT COUNT(1) AS total FROM notification_schedules WHERE content_file_id = ?"
+    ).bind(id).first<{ total: number }>();
+    const scheduleCount = Number(activeReference?.total || 0);
+    if (scheduleCount > 0) {
+      return json(
+        { error: "This file is attached to one or more schedules. Delete those schedules first." },
+        { status: 409 }
+      );
+    }
+
+    await env.MEMES_BUCKET.delete(file.storage_path);
+    await env.DB.prepare("DELETE FROM notification_content_files WHERE id = ?").bind(id).run();
+    return json({ success: true, id: file.id, file_name: file.file_name });
+  } catch (error) {
+    return handleD1Error(error, "Failed to delete notification content file");
+  }
+};

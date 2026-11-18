@@ -5,7 +5,7 @@
 > that were already present in this file. Those similarly named analytics phases
 > are separate from the Admin Overhaul phase numbers.
 >
-> **Last updated:** 2026-11-03 10:33:30 +05:30
+> **Last updated:** 2026-11-18 22:28:00 +05:30
 
 ## Source-of-truth and current branch state
 
@@ -22,6 +22,19 @@
   canonical `docs/AGENT_RULES.md` was read before this phase work.
 - No production deployment, migration, R2 deletion, or secret-bearing operation
   was performed during the Phase 4 groundwork.
+
+## Notification content-library deletion controls (post-phase update)
+
+- Added file-level delete controls for uploaded push-notification content
+  libraries in the `/admin` Scheduled Drops panel.
+- Extended `DELETE /api/admin/notifications/content-files` to remove old
+  libraries from both D1 metadata (`notification_content_files`) and the R2
+  object path.
+- Added protection to block deletion when a library is currently referenced by
+  any notification schedule, returning a clear API error instead of leaving
+  broken schedule references.
+- Updated docs references for the expanded `GET/POST/DELETE` content-file route
+  and the new in-use deletion guard behavior.
 
 ## Admin Overhaul Phase 0 — Audit and scope lock
 

@@ -43,6 +43,7 @@ Meme Capsule operates across three decoupled codebases:
 - [`README_ANALYTICS.md`](./README_ANALYTICS.md) — Analytics tracking SDK, ingestion API, and worker aggregation pipeline.
 - [`ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md`](./ANALYTICS_PRODUCTION_IMPLEMENTATION_PLAN.md) — Phased path from the current analytics foundation to Android integration and production release.
 - [`report.md`](./report.md) — Google Lighthouse audit analysis, Core Web Vitals, accessibility, and backend caching remediation report.
+- [`REPORTS_BACKEND_AUDIT.md`](./REPORTS_BACKEND_AUDIT.md) — Deep structural audit of report ingestion, moderation actions, D1 schema parity, risks, and remediation.
 - [`CHANGELOG.md`](./CHANGELOG.md) — Release history and migration milestones.
 - [`CLAUDE.md`](./CLAUDE.md) — Local development, Wrangler commands, and environment settings.
 - [`AGENTS.md`](./AGENTS.md) — AI agent workflow summary.
@@ -73,7 +74,7 @@ Meme Capsule operates across three decoupled codebases:
   - Human Curation, AI Judge Workflow, and Reports / Moderation links to their existing protected workbenches.
   - Push Notifications control room with FCM composer, live Android preview, device stats, target selection, confirmation, and dispatch logs.
   - Scheduled Drops panel with reusable message templates and recurring timezone-aware delivery schedules.
-  - Permanent JSON/CSV/TXT content-library upload with random message selection and per-schedule delete controls. Catalog TXT files may use section headings, numbered entries, and two lines per entry.
+  - Permanent JSON/CSV/TXT content-library upload with random message selection, file-level delete controls, and in-use schedule protection. Catalog TXT files may use section headings, numbered entries, and two lines per entry.
 - The retired Admin Analytics and legacy Admin AI Categorisation views are no longer mounted in `/admin`. Their backend endpoints remain available for retained workers, external producers, or compatibility until separately deprecated.
 - **Moderation Dashboard (`/reports`)**:
   - Token-protected review interface for user-reported content.
@@ -136,7 +137,7 @@ Admin backend routes:
 - `GET /api/catalog` - return the active curated meme index for client-side shuffled deck delivery
 - `GET/POST /api/admin/notifications/messages` - list and create reusable notification messages
 - `GET/POST/PATCH /api/admin/notifications/schedules` - list, create, enable, and disable recurring schedules and delivery history
-- `GET/POST /api/admin/notifications/content-files` - list and permanently store validated JSON/CSV/TXT message libraries. JSON uploads may be a flat array of `{ "title": "...", "body": "..." }` entries, an `{ "entries": [...] }` wrapper, or the sectioned catalog shape with `sections[].entries[]`; UTF-8 BOMs are accepted.
+- `GET/POST/DELETE /api/admin/notifications/content-files` - list, permanently store, and delete validated JSON/CSV/TXT message libraries. JSON uploads may be a flat array of `{ "title": "...", "body": "..." }` entries, an `{ "entries": [...] }` wrapper, or the sectioned catalog shape with `sections[].entries[]`; UTF-8 BOMs are accepted. Deletes are blocked while a library is attached to any schedule.
 - `POST /api/admin/rebalance-random-keys` - authenticated redistribution of active meme random keys.
 
 The admin token is not bundled into the frontend. Type it into the `/admin` backend panel when you want to manage R2/D1 content.
