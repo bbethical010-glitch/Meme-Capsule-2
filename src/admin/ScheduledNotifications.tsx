@@ -159,7 +159,7 @@ export default function ScheduledNotifications({ adminToken }: { adminToken: str
           </form>
           <form className="push-form compact-form" onSubmit={uploadFile}>
             <h3>RANDOM CONTENT FILE</h3>
-            <p className="form-help">Supports JSON/CSV and the catalog TXT format: section heading, numbered entries, then two lines per entry. TXT section names become the 5–7 title pool.</p>
+            <p className="form-help">Supports JSON/CSV and the catalog TXT format: section heading, numbered entries, then two lines per entry. TXT section names become notification titles.</p>
             <input name="content-file" type="file" accept=".json,.csv,.txt" required />
             <button type="submit" className="push-button push-button-yellow push-button-compact">UPLOAD & STORE</button>
             <div className="compact-list">

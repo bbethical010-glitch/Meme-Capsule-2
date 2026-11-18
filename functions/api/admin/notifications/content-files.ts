@@ -141,9 +141,6 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const text = await file.text();
   const entries = parseFile(file.name, text);
   if (!entries.length) return json({ error: "No valid message entries found." }, { status: 400 });
-  if (new Set(entries.map((entry) => entry.title).filter(Boolean)).size > 7) {
-    return json({ error: "Use no more than 7 unique notification titles." }, { status: 400 });
-  }
   const id = crypto.randomUUID();
   const storagePath = `notification-content/${id}.json`;
   try {
