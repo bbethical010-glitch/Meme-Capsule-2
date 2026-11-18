@@ -33,6 +33,9 @@
 - Added protection to block deletion when a library is currently referenced by
   any notification schedule, returning a clear API error instead of leaving
   broken schedule references.
+- Removed the unique-title cap from notification content-file uploads, allowing
+  unlimited distinct titles in a single library file while keeping per-entry
+  title/body length validation.
 - Updated docs references for the expanded `GET/POST/DELETE` content-file route
   and the new in-use deletion guard behavior.
 
