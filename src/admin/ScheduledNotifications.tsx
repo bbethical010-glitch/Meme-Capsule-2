@@ -30,6 +30,7 @@ export default function ScheduledNotifications({ adminToken }: { adminToken: str
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [days, setDays] = useState("0,1,2,3,4,5,6");
   const [notice, setNotice] = useState("");
+  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -97,6 +98,27 @@ export default function ScheduledNotifications({ adminToken }: { adminToken: str
     } catch (error) { setNotice(error instanceof Error ? error.message : "Schedule creation failed"); }
   };
 
+  const deleteContentFile = async (file: ContentFile) => {
+    if (!window.confirm(`Delete uploaded content file "${file.file_name}"?`)) return;
+    setDeletingFileId(file.id);
+    try {
+      const response = await fetch("/api/admin/notifications/content-files", {
+        method: "DELETE",
+        headers: headers(adminToken),
+        body: JSON.stringify({ id: file.id }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error || "File deletion failed");
+      if (fileId === file.id) setFileId("");
+      setNotice("Content file deleted.");
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "File deletion failed");
+    } finally {
+      setDeletingFileId(null);
+    }
+  };
+
   const toggleSchedule = async (schedule: Schedule) => {
     try {
       const response = await fetch("/api/admin/notifications/schedules", {
@@ -140,7 +162,26 @@ export default function ScheduledNotifications({ adminToken }: { adminToken: str
             <p className="form-help">Supports JSON/CSV and the catalog TXT format: section heading, numbered entries, then two lines per entry. TXT section names become the 5–7 title pool.</p>
             <input name="content-file" type="file" accept=".json,.csv,.txt" required />
             <button type="submit" className="push-button push-button-yellow push-button-compact">UPLOAD & STORE</button>
-            <div className="compact-list">{files.map((file) => <div className="compact-item" key={file.id}><strong>{file.file_name}</strong><span>{file.entry_count} messages</span></div>)}</div>
+            <div className="compact-list">
+              {files.map((file) => (
+                <div className="compact-item" key={file.id}>
+                  <div className="compact-item-main">
+                    <strong>{file.file_name}</strong>
+                    <span>{file.entry_count} messages</span>
+                  </div>
+                  <div className="compact-item-actions">
+                    <button
+                      type="button"
+                      className="push-button push-button-danger push-button-compact"
+                      onClick={() => void deleteContentFile(file)}
+                      disabled={deletingFileId === file.id}
+                    >
+                      {deletingFileId === file.id ? "DELETING..." : "DELETE"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </form>
         </div>
         <form className="push-form compact-form" onSubmit={createSchedule}>
