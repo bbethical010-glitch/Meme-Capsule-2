@@ -25,7 +25,7 @@ export default function EditorialButtons({
           LAYER 0 — EDITORIAL ACTION
         </span>
         <span style={{ fontSize: "11px", color: "#aaa" }}>
-          {currentStatus ? `SELECTED: ${currentStatus.toUpperCase()}` : "SELECT ACTION [K, X, D, R]"}
+          {currentStatus ? `SELECTED: ${currentStatus.toUpperCase()}` : "SELECT ACTION [K, X, D]"}
         </span>
       </div>
 
@@ -79,23 +79,6 @@ export default function EditorialButtons({
           <span className="curate-key-pill">[D]</span>
           <span className="curate-anton" style={{ fontSize: "16px" }}>DUPLICATE</span>
           <span style={{ fontSize: "10px", opacity: 0.8 }}>Mark Copy</span>
-        </button>
-
-        {/* REVIEW LATER */}
-        <button
-          type="button"
-          className={`curate-action-btn ${currentStatus === "review_later" ? "active" : ""}`}
-          style={{
-            "--btn-border": "#f4c300",
-            background: currentStatus === "review_later" ? "#f4c300" : "#1c1b1b",
-            color: currentStatus === "review_later" ? "#121212" : "#ffffff"
-          } as React.CSSProperties}
-          onClick={() => onSelectStatus("review_later")}
-          title="Defer to review later queue [Key: R]"
-        >
-          <span className="curate-key-pill">[R]</span>
-          <span className="curate-anton" style={{ fontSize: "16px" }}>LATER</span>
-          <span style={{ fontSize: "10px", opacity: 0.8 }}>Defer Queue</span>
         </button>
       </div>
 

@@ -37,6 +37,9 @@ import {
   CURATION_MECHANISMS,
   type CorpusStatus
 } from "../curate/curateTypes";
+import CorpusCategoryCards from "../components/CorpusCategoryCards";
+import { useCorpusSummary } from "../hooks/useCorpusSummary";
+import type { CorpusState } from "../types/corpus";
 import "./admin.css";
 
 const ImageEditorModal = React.lazy(() => import("../curate/editor/ImageEditorModal"));
@@ -219,7 +222,8 @@ export default function AdminApp() {
   // Filtering & Pagination
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState(searchTerm);
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "draft" | "archived" | "excluded" | "nsfw">("all");
+  const { summary: corpusSummary, refresh: refreshCorpusSummary } = useCorpusSummary(adminToken);
+  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "archive" | "active" | "conflict" | "excluded">("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -436,8 +440,8 @@ export default function AdminApp() {
       if (statusFilter === "active" && meme.status !== "active") return false;
       if (statusFilter === "draft" && meme.status !== "draft") return false;
       if (statusFilter === "excluded" && meme.curation_status !== "excluded") return false;
-      if (statusFilter === "archived" && (meme.status !== "archived" || meme.curation_status === "excluded")) return false;
-      if (statusFilter === "nsfw" && !(meme as any).is_nsfw) return false;
+      if (statusFilter === "archive" && (meme.status !== "archived" || meme.curation_status === "excluded")) return false;
+      if (statusFilter === "conflict" && (meme as any).corpus_status !== "conflict") return false;
 
       if (!term) return true;
       return (
@@ -557,18 +561,16 @@ export default function AdminApp() {
     try {
       window.sessionStorage.setItem(ADMIN_TOKEN_KEY, adminToken);
 
-      const statusParam = (statusFilter === "all" || statusFilter === "excluded" || statusFilter === "nsfw") ? undefined : statusFilter;
-      const curationParam = statusFilter === "excluded" ? "excluded" : undefined;
-      const nsfwParam = statusFilter === "nsfw" ? "nsfw" : undefined;
+      const statusParam = (statusFilter === "all" || statusFilter === "excluded") ? undefined : (statusFilter === "archive" ? "archived" : statusFilter);
+      const curationParam = statusFilter === "excluded" ? "excluded" : (statusFilter === "conflict" ? "conflict" : undefined);
 
       const data = await fetchVaultMemes(adminToken, {
         batch_id: vaultBatchId || undefined,
         page: targetPage,
         per_page: targetPerPage,
         q: debouncedSearch.trim() || undefined,
-        status: statusParam,
+        status: statusParam as any,
         curation_status: curationParam,
-        nsfw: nsfwParam,
         stats: true
       });
 
@@ -1033,37 +1035,15 @@ export default function AdminApp() {
         </nav>
 
         <div className="content-canvas">
-          <section className="top-stats-bar" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "12px" }}>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive">
-              <p>Total Memes</p>
-              <p className="stat-value total">{stats.total}</p>
-              {stats.live_corpus !== undefined && stats.purged ? (
-                <span style={{ fontSize: "10px", color: "var(--on-surface-variant)", display: "block", marginTop: "2px", fontFamily: "monospace" }}>
-                  {stats.live_corpus} live • {stats.purged} purged
-                </span>
-              ) : null}
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive">
-              <p>Active</p>
-              <p className="stat-value active">{stats.active}</p>
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive" style={{ borderLeft: "4px solid #FF3B30" }}>
-              <p style={{ color: "#FF3B30" }}>Excluded</p>
-              <p className="stat-value" style={{ color: "#FF3B30" }}>{stats.excluded}</p>
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive">
-              <p>Archived</p>
-              <p className="stat-value archived">{stats.archived}</p>
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive">
-              <p>Drafts</p>
-              <p className="stat-value drafts">{stats.drafts}</p>
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive" style={{ borderLeft: "4px solid #dd0061" }}>
-              <p style={{ color: "#dd0061" }}>NSFW</p>
-              <p className="stat-value" style={{ color: "#dd0061" }}>{stats.nsfw}</p>
-            </div>
-          </section>
+          {/* Canonical 5-State Corpus Category Cards */}
+          <CorpusCategoryCards
+            summary={corpusSummary}
+            activeStateFilter={statusFilter}
+            onSelectState={(st) => {
+              setStatusFilter(st);
+              setCurrentPage(1);
+            }}
+          />
 
           {notice && (
             <div
@@ -1156,7 +1136,7 @@ export default function AdminApp() {
                     </div>
 
                     <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                      {(["all", "active", "excluded", "archived", "draft", "nsfw"] as const).map((st) => (
+                      {(["all", "draft", "archive", "active", "conflict", "excluded"] as const).map((st) => (
                         <button
                           key={st}
                           type="button"
@@ -1170,12 +1150,12 @@ export default function AdminApp() {
                             fontSize: "11px",
                             fontWeight: 700,
                             textTransform: "uppercase",
-                            background: statusFilter === st ? (st === "excluded" ? "#FF3B30" : st === "nsfw" ? "#dd0061" : "var(--primary)") : "var(--surface)",
+                            background: statusFilter === st ? "var(--primary)" : "var(--surface)",
                             color: statusFilter === st ? "#ffffff" : "var(--on-surface)",
                             cursor: "pointer"
                           }}
                         >
-                          {st === "all" ? `all (${stats.total})` : st === "active" ? `active (${stats.active})` : st === "excluded" ? `excluded (${stats.excluded})` : st === "archived" ? `archived (${stats.archived})` : st === "nsfw" ? `nsfw (${stats.nsfw})` : `draft (${stats.drafts})`}
+                          {st.toUpperCase()}
                         </button>
                       ))}
                     </div>
@@ -1264,7 +1244,7 @@ export default function AdminApp() {
                 </div>
 
                 {/* Bulk Actions Header */}
-                {(statusFilter === "archived" || statusFilter === "excluded" || selectedIds.size > 0) && (
+                {(statusFilter === "archive" || statusFilter === "excluded" || selectedIds.size > 0) && (
                   <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "16px", padding: "12px", background: "var(--surface-container)", border: "2px solid black" }}>
                     <button
                       type="button"
@@ -1309,7 +1289,7 @@ export default function AdminApp() {
                         onInspect={setInspectedMeme}
                         isSelected={selectedIds.has(meme.id) || (inspectedMeme?.id === meme.id)}
                         onToggleSelect={handleToggleSelect}
-                        isArchivedView={statusFilter === "archived" || statusFilter === "excluded" || selectedIds.size > 0}
+                        isArchivedView={statusFilter === "archive" || statusFilter === "excluded" || selectedIds.size > 0}
                         onHardDelete={(id) => hardDeleteMemes([id])}
                       />
                     ))
@@ -1606,21 +1586,6 @@ export default function AdminApp() {
                                 onClick={() => setCurationAction("duplicate")}
                               >
                                 [DUPLICATE]
-                              </button>
-                              <button
-                                type="button"
-                                className="brutalist-border-sm"
-                                style={{
-                                  padding: "6px",
-                                  fontSize: "11px",
-                                  fontWeight: 800,
-                                  cursor: "pointer",
-                                  background: curationAction === "review_later" ? "#5ac8fa" : "#242424",
-                                  color: "#fff"
-                                }}
-                                onClick={() => setCurationAction("review_later")}
-                              >
-                                [REVIEW LATER]
                               </button>
                             </div>
 

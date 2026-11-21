@@ -738,7 +738,7 @@ export default function AiJudgeConsole({
                 border: "1px solid #FF9500",
                 fontWeight: 700
               }}
-              title="Memes deferred to review_later after exhausted retries"
+              title="Memes skipped after exhausted retries"
             >
               ⚠️ {skippedCount} SKIPPED
             </span>
@@ -1720,8 +1720,7 @@ export default function AiJudgeConsole({
                   outline: "none"
                 }}
               >
-                <option value="review_later">⚠️ Defer to Review Later Queue [Recommended]</option>
-                <option value="excluded">✕ Exclude Meme from Corpus</option>
+                <option value="excluded">✕ Exclude Meme from Corpus [Recommended]</option>
               </select>
             </div>
           </div>
@@ -1791,7 +1790,7 @@ export default function AiJudgeConsole({
               </button>
               <button
                 type="button"
-                onClick={() => updateConfigField("customInstructions", "Be strict. Mark ambiguous or low-quality images as review_later. Only keep high-effort, genuine memes.")}
+                onClick={() => updateConfigField("customInstructions", "Be strict. Mark ambiguous or low-quality images as excluded. Only keep high-effort, genuine memes.")}
                 style={{
                   padding: "2px 8px",
                   fontSize: "11px",

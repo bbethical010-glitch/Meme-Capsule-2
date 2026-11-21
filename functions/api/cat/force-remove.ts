@@ -8,6 +8,7 @@
 import type { PagesFunction } from "../../_shared/pages";
 import { json, type Env } from "../../_shared/d1r2";
 import { requireAuth } from "../../_shared/catAuth";
+import { purgeMeme } from "../../_shared/corpus";
 
 interface ForceRemovePayload {
   meme_id?: string;
@@ -111,77 +112,42 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       }
     }
 
-    // 8. Deactivate meme in D1 and insert audit row (ONE batch)
+    // 8. Record audit log into meme_force_removals and permanently purge via purgeMeme
     const now = new Date().toISOString();
     try {
-      await env.DB.batch([
-        env.DB.prepare(
-          "UPDATE memes SET is_active = 0, status = ? WHERE id = ?"
-        ).bind("archived", memeId),
-        env.DB.prepare(`
-          INSERT INTO meme_force_removals 
-          (meme_id, title, image_url, storage_path, r2_key, removed_by, removed_by_name, reason, removed_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-          memeId,
-          meme.title || null,
-          meme.image_url || null,
-          meme.storage_path || null,
-          r2Key || null,
-          user.id,
-          user.display_name,
-          reason,
-          now
-        )
-      ]);
-    } catch (dbErr) {
-      const errorMsg = dbErr instanceof Error ? dbErr.message : "Database error";
-      return json(
-        { success: false, error: `Database error: ${errorMsg}` },
-        { status: 500 }
-      );
-    }
+      await env.DB.prepare(`
+        INSERT INTO meme_force_removals 
+        (meme_id, title, image_url, storage_path, r2_key, removed_by, removed_by_name, reason, removed_at, r2_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      `).bind(
+        memeId,
+        meme.title || null,
+        meme.image_url || null,
+        meme.storage_path || null,
+        r2Key || null,
+        user.id,
+        user.display_name,
+        reason,
+        now
+      ).run();
 
-    // 9. Delete from R2 (if r2_key exists)
-    if (r2Key) {
-      try {
-        await env.MEMES_BUCKET.delete(r2Key);
-        // Mark R2 delete as successful
-        await env.DB.prepare(
-          "UPDATE meme_force_removals SET r2_deleted = 1, r2_deleted_at = ? WHERE meme_id = ?"
-        ).bind(now, memeId).run();
-
-        return json({
-          success: true,
-          meme_id: memeId,
-          r2_deleted: true
-        });
-      } catch (r2Err) {
-        // R2 delete failed, but D1 was already deactivated
-        // This is not a hard failure — meme is hidden from app
-        const errorMsg = r2Err instanceof Error ? r2Err.message : "Unknown R2 error";
-        await env.DB.prepare(
-          "UPDATE meme_force_removals SET r2_error = ? WHERE meme_id = ?"
-        ).bind(errorMsg, memeId).run();
-
-        return json({
-          success: true,
-          meme_id: memeId,
-          r2_deleted: false,
-          warning: `Meme deactivated but R2 delete failed: ${errorMsg}`
-        });
-      }
-    } else {
-      // No R2 key (likely Reddit source) — still success, mark r2_deleted = 1
-      await env.DB.prepare(
-        "UPDATE meme_force_removals SET r2_deleted = 1, r2_error = ? WHERE meme_id = ?"
-      ).bind("not_in_r2", memeId).run();
+      await purgeMeme(env, memeId, {
+        actor: user.id,
+        reason: `cat_force_remove: ${reason}`,
+        detail: JSON.stringify({ removed_by_name: user.display_name, r2_key: r2Key })
+      });
 
       return json({
         success: true,
         meme_id: memeId,
         r2_deleted: true
       });
+    } catch (dbErr) {
+      const errorMsg = dbErr instanceof Error ? dbErr.message : "Purge error";
+      return json(
+        { success: false, error: `Purge error: ${errorMsg}` },
+        { status: 500 }
+      );
     }
   } catch (err: unknown) {
     if (err instanceof Response) return err;

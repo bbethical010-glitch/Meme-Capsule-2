@@ -45,10 +45,9 @@ Because source images originate across web scrapes, you MUST automatically exclu
 ### 3. TAXONOMY & ATTRIBUTE SELECTION:
 
 1. **EDITORIAL ACTION ("corpus_status")**:
-   - Must be one of: "keep" | "excluded" | "duplicate" | "review_later"
+   - Must be one of: "keep" | "excluded" | "duplicate"
    - Use "keep" for authentic, funny, distinctive meme content.
    - Use "excluded" for non-memes (plain normal photos, corporate ads, dry docs) OR memes containing external provider watermarks.
-   - Use "review_later" for deeply obscure references or ambiguous context requiring human verification.
 
 2. **TOPIC ("topics")**:
    - Select 1 to 3 topics that best describe the content from this list ONLY:
@@ -81,7 +80,7 @@ Because source images originate across web scrapes, you MUST automatically exclu
 ### 4. OUTPUT FORMAT:
 Respond with a JSON object or clean key-value block. Keep internal monologue minimal:
 {
-  "corpus_status": "keep" | "excluded" | "duplicate" | "review_later",
+  "corpus_status": "keep" | "excluded" | "duplicate",
   "duplicate_of": null,
   "topics": ["Everyday Life"],
   "tone": "Neutral",

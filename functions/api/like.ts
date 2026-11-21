@@ -36,14 +36,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         newCount = Math.max(0, existing.likes_count - 1);
       }
     } else {
-      // Meme doesn't exist in D1 (it's a fallback/local meme).
-      // Insert a tracking row with a placeholder image_url to satisfy the
-      // CHECK(image_url IS NOT NULL OR storage_path IS NOT NULL) constraint.
+      // Meme does not exist in D1 (e.g. static fallback meme or purged meme).
+      // Under integrity rules, never auto-create memes rows from client telemetry.
       newCount = action === "like" ? 1 : 0;
-      await env.DB.prepare(
-        `INSERT INTO memes (id, title, image_url, category, status, is_active, likes_count, input_method)
-         VALUES (?, ?, ?, 'Unsorted', 'active', 0, ?, 'seed')`
-      ).bind(id, `Tracked: ${id}`, `fallback://${id}`, newCount).run();
     }
 
     return json({ success: true, likes_count: newCount });

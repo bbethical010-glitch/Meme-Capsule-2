@@ -73,7 +73,7 @@ const readPersistedSession = (): PersistedSession | null => {
 const uploadStateLabel = (item: BulkDraftItem) => {
   if (!item.server) return "READY TO UPLOAD";
   if (item.server.upload_state === "uploading") return "UPLOADING...";
-  if (item.server.upload_state === "uploaded") return "✓ UPLOADED (DRAFT)";
+  if (item.server.upload_state === "uploaded") return "✓ UPLOADED - IN DRAFT. RUN AI JUDGE FROM THE DRAFT VIEW.";
   if (item.server.upload_state === "failed") return "UPLOAD FAILED";
   return "PENDING";
 };

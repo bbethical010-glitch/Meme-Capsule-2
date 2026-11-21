@@ -1,22 +1,26 @@
 /**
  * POST /api/curate/super/resolve
  *
- * Sets the final authoritative curation decision for a meme by Super Admin.
+ * SuperAdmin actions:
+ * 1. CONFLICT arbitration: choose 'active' or 'excluded' (reason 'superadmin_arbitration').
+ * 2. EXCLUDED review EDIT VOTE: edit one judge's vote and re-run applyConsensus.
+ * All transitions go through transitionMeme or applyConsensus.
  */
 
 import type { PagesFunction } from "../../../_shared/pages";
 import { json, type Env } from "../../../_shared/d1r2";
 import { validateSession } from "../../../_shared/catAuth";
 import { ensureCurationTables } from "../../../_shared/curateDb";
+import { transitionMeme, applyConsensus, type CorpusState, type VoteDecision } from "../../../_shared/corpus";
 
 interface ResolvePayload {
+  action?: "arbitrate" | "edit_vote";
   meme_id?: string;
-  corpus_status?: "keep" | "excluded" | "duplicate" | "review_later";
-  duplicate_of?: string;
-  topics?: string[];
-  tone?: string;
-  humour_mechanisms?: string[];
-  curator_note?: string;
+  target_state?: "active" | "excluded";
+  note?: string;
+  // For edit_vote:
+  judge_id?: string;
+  new_vote?: VoteDecision;
 }
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
@@ -30,120 +34,95 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     const body = (await request.json().catch(() => ({}))) as ResolvePayload;
     const memeId = (body.meme_id || "").trim();
-    const corpusStatus = body.corpus_status;
 
     if (!memeId) {
       return json({ error: "meme_id is required." }, { status: 400 });
     }
 
-    if (
-      !corpusStatus ||
-      !["keep", "excluded", "duplicate", "review_later"].includes(corpusStatus)
-    ) {
-      return json(
-        {
-          error:
-            "corpus_status must be 'keep', 'excluded', 'duplicate', or 'review_later'.",
-        },
-        { status: 400 },
-      );
+    const currentMeme = await env.DB.prepare(
+      "SELECT id, corpus_status FROM memes WHERE id = ?"
+    ).bind(memeId).first<{ id: string; corpus_status: CorpusState }>();
+
+    if (!currentMeme) {
+      return json({ error: "Meme not found." }, { status: 404 });
     }
 
-    const rawTopics = Array.isArray(body.topics)
-      ? body.topics.filter(Boolean)
-      : [];
-    const topics = rawTopics.slice(0, 3);
+    const actor = sessionUser.display_name || "Super Admin";
 
-    const tone = (body.tone || "").trim() || null;
+    // 1. EDIT VOTE on EXCLUDED meme
+    if (body.action === "edit_vote" || (currentMeme.corpus_status === "excluded" && body.judge_id && body.new_vote)) {
+      const judgeId = (body.judge_id || "").trim();
+      const newVote = body.new_vote;
 
-    const rawMechanisms = Array.isArray(body.humour_mechanisms)
-      ? body.humour_mechanisms.filter(Boolean)
-      : [];
-    const mechanisms = rawMechanisms.slice(0, 2);
+      if (!judgeId || !newVote || !["keep", "excluded", "duplicate"].includes(newVote)) {
+        return json({ error: "judge_id and valid new_vote ('keep', 'excluded', 'duplicate') required for edit_vote." }, { status: 400 });
+      }
 
-    const duplicateOf = (body.duplicate_of || "").trim() || null;
-    const curatorNote = (body.curator_note || "").trim() || null;
-    const now = new Date().toISOString();
+      const existingVote = await env.DB.prepare(
+        "SELECT corpus_status FROM meme_curation WHERE meme_id = ? AND user_id = ?"
+      ).bind(memeId, judgeId).first<{ corpus_status: string }>();
 
-    // Only keep/excluded are represented in meme_curation_final. Duplicate and
-    // review_later outcomes are authoritative directly on memes.
-    if (corpusStatus === "keep" || corpusStatus === "excluded") {
+      if (!existingVote) {
+        return json({ error: `Vote for judge ${judgeId} on meme ${memeId} not found.` }, { status: 404 });
+      }
+
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        "UPDATE meme_curation SET corpus_status = ?, updated_at = ? WHERE meme_id = ? AND user_id = ?"
+      ).bind(newVote, now, memeId, judgeId).run();
+
+      // Log the vote modification in meme_state_log
       await env.DB.prepare(`
-      INSERT INTO meme_curation_final (
-        meme_id,
-        corpus_status,
-        duplicate_of,
-        topics,
-        tone,
-        humour_mechanisms,
-        curator_note,
-        resolved_by,
-        resolved_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(meme_id) DO UPDATE SET
-        corpus_status = excluded.corpus_status,
-        duplicate_of = excluded.duplicate_of,
-        topics = excluded.topics,
-        tone = excluded.tone,
-        humour_mechanisms = excluded.humour_mechanisms,
-        curator_note = excluded.curator_note,
-        resolved_by = excluded.resolved_by,
-        resolved_at = excluded.resolved_at,
-        updated_at = excluded.updated_at
-      `)
-        .bind(
-          memeId,
-          corpusStatus,
-          duplicateOf,
-          JSON.stringify(topics),
-          tone,
-          JSON.stringify(mechanisms),
-          curatorNote,
-          sessionUser.display_name || "Super Admin",
-          now,
-          now,
-        )
-        .run();
+        INSERT INTO meme_state_log (meme_id, from_state, to_state, actor, reason, at)
+        VALUES (?, 'excluded', 'excluded', ?, ?, ?)
+      `).bind(
+        memeId,
+        actor,
+        `Superadmin edited vote for judge ${judgeId}: ${existingVote.corpus_status} -> ${newVote}`,
+        now
+      ).run();
+
+      // Re-run consensus evaluation
+      const consensusRes = await applyConsensus(env, memeId);
+
+      return json({
+        success: true,
+        action: "edit_vote",
+        meme_id: memeId,
+        judge_id: judgeId,
+        new_vote: newVote,
+        consensus: consensusRes
+      });
     }
 
-    // Update active state and status in memes table
-    // Superadmin Finalization is the authoritative gate:
-    // ONLY 'keep' becomes 'active' (is_active = 1).
-    // Everything else ('excluded', 'duplicate', 'review_later') becomes 'archived' (is_active = 0).
-    const isActive = corpusStatus === "keep" ? 1 : 0;
-    const newStatus = corpusStatus === "keep" ? "active" : "archived";
-
-    if (corpusStatus === "keep" && topics.length > 0) {
-      await env.DB.prepare(
-        "UPDATE memes SET is_active = ?, status = ?, curation_status = ?, duplicate_of = ?, topics = ?, tone = ?, humour_mechanisms = ?, tags = ?, category = COALESCE(?, category) WHERE id = ?"
-      )
-        .bind(isActive, newStatus, corpusStatus, duplicateOf, JSON.stringify(topics), tone, JSON.stringify(mechanisms), JSON.stringify(topics), topics[0] || null, memeId)
-        .run();
-    } else {
-      await env.DB.prepare(
-        "UPDATE memes SET is_active = ?, status = ?, curation_status = ?, duplicate_of = ?, topics = ?, tone = ?, humour_mechanisms = ? WHERE id = ?"
-      )
-        .bind(isActive, newStatus, corpusStatus, duplicateOf, JSON.stringify(topics), tone, JSON.stringify(mechanisms), memeId)
-        .run();
+    // 2. CONFLICT ARBITRATION
+    if (currentMeme.corpus_status !== "conflict") {
+      return json({
+        error: `Arbitration is only valid for memes in 'conflict' state (current: '${currentMeme.corpus_status}').`
+      }, { status: 400 });
     }
+
+    const targetState = body.target_state;
+    if (!targetState || (targetState !== "active" && targetState !== "excluded")) {
+      return json({ error: "target_state must be 'active' or 'excluded' for arbitration." }, { status: 400 });
+    }
+
+    await transitionMeme(env, memeId, targetState, {
+      actor,
+      reason: body.note ? `superadmin_arbitration: ${body.note}` : "superadmin_arbitration",
+      expectedFrom: "conflict"
+    });
 
     return json({
       success: true,
+      action: "arbitrate",
       meme_id: memeId,
-      corpus_status: corpusStatus,
-      topics,
-      tone,
-      humour_mechanisms: mechanisms,
-      resolved_by: sessionUser.display_name,
+      state: targetState,
+      arbitrated_by: actor
     });
   } catch (err: unknown) {
     if (err instanceof Response) return err;
-
-    const msg =
-      err instanceof Error ? err.message : "Error resolving meme";
-
+    const msg = err instanceof Error ? err.message : "Error arbitrating meme";
     return json({ error: msg }, { status: 500 });
   }
 };

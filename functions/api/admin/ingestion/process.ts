@@ -11,6 +11,7 @@ import {
   type IngestionEvaluationRow,
   type IngestionJobRow
 } from "../../../_shared/ingestion";
+import { transitionMeme } from "../../../_shared/corpus";
 
 const TOPICS = [
   "Everyday Life", "Work / Education", "Relationships", "Family", "Politics / Society",
@@ -18,7 +19,7 @@ const TOPICS = [
 ];
 const TONES = ["Wholesome", "Dark", "Chaotic", "Cynical", "Awkward", "Neutral"];
 const MECHANISMS = ["Relatability", "Absurdity", "Irony", "Satire", "Exaggeration", "Cringe", "Dark Humour", "Parody", "Surrealism"];
-const DECISIONS = ["keep", "excluded", "duplicate", "review_later"];
+const DECISIONS = ["keep", "excluded", "duplicate"];
 
 type PresetRow = {
   provider: string;
@@ -86,8 +87,6 @@ const validateResult = (raw: Record<string, unknown>, rawResponse: string, token
   const tone = typeof raw.tone === "string" ? raw.tone : "";
   const decision = raw.decision === "exclude"
     ? "excluded"
-    : raw.decision === "later"
-    ? "review_later"
     : typeof raw.decision === "string"
     ? raw.decision
     : "";
@@ -141,7 +140,7 @@ const buildPrompt = () => `You are an advisory meme-culture pre-evaluator for Me
 TOPICS: ${TOPICS.join(", ")}
 TONES: ${TONES.join(", ")}
 HUMOUR MECHANISMS: ${MECHANISMS.join(", ")}
-DECISION: keep, excluded, duplicate, or review_later.
+DECISION: keep, excluded, or duplicate.
 Use 1-3 topics, exactly one tone, 1-2 humour mechanisms, confidence from 0 to 1, and one short rationale.
 JSON shape: {"topics":["Everyday Life"],"tone":"Neutral","humour_mechanisms":["Relatability"],"decision":"keep","confidence":0.85,"reasoning":"One short sentence."}`;
 
@@ -423,12 +422,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         WHERE job_id = ?
       `).bind(new Date().toISOString(), new Date().toISOString(), jobId).run();
 
-      // Promote private meme from draft to archived with curation_status = NULL now that AI advisory evaluation succeeded
-      await env.DB.prepare(`
-        UPDATE memes
-        SET status = 'archived', is_active = 0, curation_status = NULL
-        WHERE id = ? AND status = 'draft'
-      `).bind(job.meme_id).run();
+      // Promote meme from draft to archive now that AI advisory evaluation succeeded
+      await transitionMeme(env, job.meme_id, "archive", {
+        actor: "ai_judge",
+        reason: "ai_evaluation_succeeded",
+        expectedFrom: "draft"
+      });
 
       const preview = j4Row || finalRows[0];
       if (preview) await writeLegacyAdvisoryPreview(env, job, preview);

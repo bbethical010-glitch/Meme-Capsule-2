@@ -1147,12 +1147,6 @@ export default function CurateApp() {
         setStatus("duplicate");
         return;
       }
-      if (key === "r") {
-        e.preventDefault();
-        setStatus("review_later");
-        handleApproveAndAdvance("manual", "review_later");
-        return;
-      }
 
       // Topics shortcuts: 1-9, 0, -, =
       const matchedTopic = CURATION_TOPICS.find((t) => t.key.toLowerCase() === key);
@@ -1195,8 +1189,6 @@ export default function CurateApp() {
         ? "EXCLUDED"
         : savedStatus === "duplicate"
         ? "DUPLICATE"
-        : savedStatus === "review_later"
-        ? "REVIEW LATER"
         : String(savedStatus).toUpperCase();
 
     const statusBadgeClass =
@@ -1206,8 +1198,6 @@ export default function CurateApp() {
         ? "curate-saved-status-badge--excluded"
         : savedStatus === "duplicate"
         ? "curate-saved-status-badge--duplicate"
-        : savedStatus === "review_later"
-        ? "curate-saved-status-badge--review_later"
         : "";
 
     return (
@@ -1438,7 +1428,6 @@ export default function CurateApp() {
                   >
                     <option value="unreviewed">⚡ Unreviewed Memes (Global)</option>
                     <option value="batch">📦 Batches Queue</option>
-                    <option value="review_later">⚠️ Review Later Queue</option>
                     <option value="keep">✓ Kept Active Memes</option>
                     <option value="excluded">✕ Excluded Memes</option>
                     <option value="duplicate">⎘ Duplicates</option>
@@ -1683,7 +1672,6 @@ export default function CurateApp() {
                 >
                   <option value="unreviewed">⚡ Unreviewed Memes (Global)</option>
                   <option value="batch">📦 Batches Queue</option>
-                  <option value="review_later">⚠️ Review Later Queue</option>
                   <option value="keep">✓ Kept Active Memes</option>
                   <option value="excluded">✕ Excluded Memes</option>
                   <option value="duplicate">⎘ Duplicates</option>
@@ -2045,7 +2033,7 @@ export default function CurateApp() {
               duplicateOf={duplicateOf}
               onSelectStatus={(s) => {
                 setStatus(s);
-                if (s === "excluded" || s === "review_later") {
+                if (s === "excluded") {
                   handleApproveAndAdvance("manual", s);
                 }
               }}
@@ -2315,7 +2303,7 @@ export default function CurateApp() {
                 duplicateOf={duplicateOf}
                 onSelectStatus={(s) => {
                   setStatus(s);
-                  if (s === "excluded" || s === "review_later") {
+                  if (s === "excluded") {
                     handleApproveAndAdvance("manual", s);
                   }
                 }}

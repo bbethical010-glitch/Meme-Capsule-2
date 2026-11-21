@@ -7,6 +7,8 @@ import {
   type D1MemeRow,
   type Env
 } from "../../_shared/d1r2";
+import { intakeMeme } from "../../_shared/intake";
+import { purgeMeme, getCorpusSummary } from "../../_shared/corpus";
 
 type SavePayload = {
   meme?: Partial<Meme>;
@@ -134,21 +136,23 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   if (statusFilter && statusFilter !== "all") {
-    if (statusFilter === "active" || statusFilter === "draft" || statusFilter === "archived") {
-      conditions.push("m.status = ?");
-      params.push(statusFilter);
+    if (["draft", "archive", "active", "conflict", "excluded"].includes(statusFilter)) {
+      conditions.push("(m.corpus_status = ? OR m.status = ?)");
+      params.push(statusFilter, statusFilter);
+    } else if (statusFilter === "archived") {
+      conditions.push("(m.corpus_status = 'archive' OR m.status = 'archived')");
     }
   }
 
   if (curationFilter && curationFilter !== "all") {
     if (curationFilter === "keep") {
-      conditions.push("(m.curation_status = 'keep' OR f.corpus_status = 'keep')");
+      conditions.push("(m.corpus_status = 'active' OR m.curation_status = 'keep' OR f.corpus_status = 'keep')");
     } else if (curationFilter === "excluded") {
-      conditions.push("(m.curation_status = 'excluded' OR f.corpus_status = 'excluded')");
-    } else if (curationFilter === "review_later") {
-      conditions.push("(m.curation_status = 'review_later' OR f.corpus_status = 'review_later')");
+      conditions.push("(m.corpus_status = 'excluded' OR m.curation_status = 'excluded' OR f.corpus_status = 'excluded')");
+    } else if (curationFilter === "conflict") {
+      conditions.push("m.corpus_status = 'conflict'");
     } else if (curationFilter === "unreviewed") {
-      conditions.push("(m.curation_status IS NULL AND f.corpus_status IS NULL)");
+      conditions.push("(m.corpus_status IN ('draft', 'archive') AND (m.curation_status IS NULL AND f.corpus_status IS NULL))");
     }
   }
 
@@ -162,43 +166,27 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  // 1. Calculate corpus statistics if requested
+  // 1. Calculate corpus statistics using the canonical corpus summary
   let stats: { total: number; live_corpus?: number; purged?: number; active: number; drafts: number; archived: number; excluded: number; nsfw: number } | undefined;
   if (isVaultQuery || url.searchParams.get("stats") === "1" || url.searchParams.get("stats") === "true") {
     try {
-      const statsRow = await env.DB.prepare(
-        `SELECT
-          COUNT(*) as total,
-          SUM(CASE WHEN m.status = 'active' THEN 1 ELSE 0 END) as active,
-          SUM(CASE WHEN m.status = 'draft' THEN 1 ELSE 0 END) as drafts,
-          SUM(CASE WHEN m.status = 'archived' AND (m.curation_status IS NULL OR m.curation_status != 'excluded') AND (f.corpus_status IS NULL OR f.corpus_status != 'excluded') THEN 1 ELSE 0 END) as archived,
-          SUM(CASE WHEN m.curation_status = 'excluded' OR f.corpus_status = 'excluded' THEN 1 ELSE 0 END) as excluded,
-          SUM(CASE WHEN m.is_nsfw = 1 THEN 1 ELSE 0 END) as nsfw
-         FROM memes m
-         LEFT JOIN meme_curation_final f ON m.id = f.meme_id`
-      ).first<{ total: number; active: number; drafts: number; archived: number; excluded: number; nsfw: number }>();
-
-      let purged = 0;
+      const summary = await getCorpusSummary(env);
+      let nsfw = 0;
       try {
-        const forceRes = await env.DB.prepare("SELECT COUNT(*) as cnt FROM meme_force_removals").first<{ cnt: number }>();
-        purged = forceRes?.cnt ?? 0;
-      } catch {
-        purged = 0;
-      }
+        const nsfwRes = await env.DB.prepare("SELECT COUNT(*) as cnt FROM memes WHERE is_nsfw = 1").first<{ cnt: number }>();
+        nsfw = nsfwRes?.cnt || 0;
+      } catch {}
 
-      if (statsRow) {
-        const rawTotal = Number(statsRow.total) || 0;
-        stats = {
-          total: rawTotal,
-          live_corpus: Math.max(0, rawTotal - purged),
-          purged,
-          active: Number(statsRow.active) || 0,
-          drafts: Number(statsRow.drafts) || 0,
-          archived: Number(statsRow.archived) || 0,
-          excluded: Number(statsRow.excluded) || 0,
-          nsfw: Number(statsRow.nsfw) || 0
-        };
-      }
+      stats = {
+        total: summary.total,
+        live_corpus: summary.active,
+        purged: 0,
+        active: summary.active,
+        drafts: summary.draft,
+        archived: summary.archive,
+        excluded: summary.excluded,
+        nsfw
+      };
     } catch {
       // Non-blocking fallback
     }
@@ -260,7 +248,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   });
 };
 
-// POST /api/admin/memes — create one meme metadata row
+// POST /api/admin/memes — create one meme metadata row via unified intakeMeme
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const adminError = requireAdmin(request, env);
   if (adminError) return adminError;
@@ -269,32 +257,42 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const payload = await parsePayload<SavePayload>(request);
     const row = toD1Row(payload.meme || {});
 
-    // Superadmin Gate: Cannot be ACTIVE unless finalized as 'keep' in meme_curation_final
-    if (row.status === "active") {
-      const finalRes = await env.DB.prepare(
-        "SELECT corpus_status FROM meme_curation_final WHERE meme_id = ?"
-      ).bind(row.id).first<{ corpus_status: string }>();
-
-      if (!finalRes || finalRes.corpus_status !== "keep") {
-        return json(
-          { error: "Cannot set status to ACTIVE: This meme has not been authoritatively resolved and finalized as KEEP by Superadmin in the Curator Command Center." },
-          { status: 400 }
-        );
-      }
+    const storagePath = row.storage_path?.trim();
+    if (!storagePath) {
+      return json({ error: "Creating a meme requires an R2 storage path. Upload the file first." }, { status: 400 });
     }
 
-    await env.DB.prepare(
-      `INSERT INTO memes (id, title, image_url, storage_path, source_link, category, tags, rarity, status, media_type, input_method, is_active, rights_note, share_text, random_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      row.id, row.title, row.image_url, row.storage_path, row.source_link,
-      row.category, row.tags, row.rarity, row.status, row.media_type,
-      row.input_method, row.is_active, row.rights_note, row.share_text, row.random_key
+    // Path Equivalence Invariant: Every meme enters the system through intakeMeme
+    const intakeResult = await intakeMeme(env, {
+      storagePath,
+      source: "admin_upload",
+      actor: "admin",
+      originalFilename: row.title
+    });
+
+    if (!intakeResult.ok || !intakeResult.memeId) {
+      return json({
+        error: `Intake rejected: ${intakeResult.rejectReason || "verification_failed"}`,
+        matchedMemeId: intakeResult.matchedMemeId
+      }, { status: 400 });
+    }
+
+    const memeId = intakeResult.memeId;
+
+    // Update metadata supplied during form submission (title, category, tags, rarity, etc.)
+    await env.DB.prepare(`
+      UPDATE memes SET
+        title = ?, source_link = ?, category = ?, tags = ?, rarity = ?,
+        rights_note = ?, share_text = ?
+      WHERE id = ?
+    `).bind(
+      row.title, row.source_link, row.category, row.tags, row.rarity,
+      row.rights_note, row.share_text, memeId
     ).run();
 
     const { results } = await env.DB.prepare(
       "SELECT * FROM memes WHERE id = ?"
-    ).bind(row.id).all<D1MemeRow>();
+    ).bind(memeId).all<D1MemeRow>();
 
     return json({ meme: normalizeRow(env, results[0]) });
   } catch (error) {
@@ -324,39 +322,15 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
       );
     }
 
-    // Superadmin Gate: Cannot be ACTIVE unless finalized as 'keep' in meme_curation_final
-    if (row.status === "active") {
-      const finalRes = await env.DB.prepare(
-        "SELECT corpus_status FROM meme_curation_final WHERE meme_id = ?"
-      ).bind(originalId).first<{ corpus_status: string }>();
-
-      if (!finalRes || finalRes.corpus_status !== "keep") {
-        return json(
-          { error: "Cannot set status to ACTIVE: This meme has not been authoritatively resolved and finalized as KEEP by Superadmin in the Curator Command Center." },
-          { status: 400 }
-        );
-      }
-    } else if (row.status === "archived") {
-      // If manually archived from /admin, remove it from 'keep' in meme_curation_final and memes table
-      await env.DB.prepare(
-        "UPDATE meme_curation_final SET corpus_status = 'review_later', updated_at = ? WHERE meme_id = ? AND corpus_status = 'keep'"
-      ).bind(new Date().toISOString(), originalId).run();
-
-      await env.DB.prepare(
-        "UPDATE memes SET curation_status = 'review_later' WHERE id = ? AND curation_status = 'keep'"
-      ).bind(originalId).run();
-    }
-
+    // Update metadata only. Corpus state and is_active are controlled exclusively by transitionMeme / consensus
     await env.DB.prepare(
       `UPDATE memes SET
-        id = ?, title = ?, image_url = ?, storage_path = ?, source_link = ?,
-        category = ?, tags = ?, rarity = ?, status = ?, media_type = ?,
-        input_method = ?, is_active = ?, rights_note = ?, share_text = ?, random_key = ?
+        title = ?, source_link = ?, category = ?, tags = ?, rarity = ?,
+        media_type = ?, input_method = ?, rights_note = ?, share_text = ?
        WHERE id = ?`
     ).bind(
-      row.id, row.title, row.image_url, row.storage_path, row.source_link,
-      row.category, row.tags, row.rarity, row.status, row.media_type,
-      row.input_method, row.is_active, row.rights_note, row.share_text, row.random_key,
+      row.title, row.source_link, row.category, row.tags, row.rarity,
+      row.media_type, row.input_method, row.rights_note, row.share_text,
       originalId
     ).run();
 
@@ -374,7 +348,7 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   }
 };
 
-// DELETE /api/admin/memes — archive (soft-delete) one meme
+// DELETE /api/admin/memes — purge one meme via unified purgeMeme
 export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
   const adminError = requireAdmin(request, env);
   if (adminError) return adminError;
@@ -383,24 +357,18 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
     const payload = await parsePayload<DeletePayload>(request);
     const id = payload.id?.trim();
     if (!id) {
-      throw new Error("id is required to archive a meme.");
+      throw new Error("id is required to delete a meme.");
     }
 
-    await env.DB.prepare(
-      "UPDATE memes SET status = 'archived', is_active = 0, curation_status = CASE WHEN curation_status = 'keep' THEN 'review_later' ELSE curation_status END WHERE id = ?"
-    ).bind(id).run();
+    // Single deletion writer: purgeMeme handles R2 delete, 12 child tables cascade, and audit log
+    await purgeMeme(env, id, {
+      actor: "admin",
+      reason: "admin_delete",
+      detail: "Purged via Admin API"
+    });
 
-    // Synchronize meme_curation_final away from 'keep' so Superadmin reflects the archive
-    await env.DB.prepare(
-      "UPDATE meme_curation_final SET corpus_status = 'review_later', updated_at = ? WHERE meme_id = ? AND corpus_status = 'keep'"
-    ).bind(new Date().toISOString(), id).run();
-
-    const { results } = await env.DB.prepare(
-      "SELECT * FROM memes WHERE id = ?"
-    ).bind(id).all<D1MemeRow>();
-
-    return json({ meme: normalizeRow(env, results[0]) });
+    return json({ success: true, memeId: id });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Unable to archive meme." }, { status: 400 });
+    return json({ error: error instanceof Error ? error.message : "Unable to delete meme." }, { status: 400 });
   }
 };

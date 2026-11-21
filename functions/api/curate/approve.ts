@@ -1,21 +1,21 @@
 /**
  * POST /api/curate/approve
  *
- * Stores the submitting judge's independent vote. Only after Judges 1, 2, and 3
- * have each voted does this endpoint compute a majority or defer to arbitration.
+ * Stores the submitting judge's independent vote in meme_curation.
+ * Votes are accepted only while the meme is in 'archive'.
+ * Automatically evaluates 3-human consensus via applyConsensus.
  */
 
 import type { PagesFunction } from "../../_shared/pages";
 import { json, handleD1Error, type Env } from "../../_shared/d1r2";
 import { validateSession } from "../../_shared/catAuth";
 import { ensureCurationTables } from "../../_shared/curateDb";
-import { hardRemoveMeme } from "../../_shared/forceRemove";
-import { resolveHumanConsensus, type AiFallback, type HumanVote } from "../../_shared/curationConsensus";
+import { applyConsensus } from "../../_shared/corpus";
 import { getIngestionJobState } from "../../_shared/ingestion";
 
 interface ApprovePayload {
   meme_id?: string;
-  corpus_status?: "keep" | "excluded" | "duplicate" | "review_later";
+  corpus_status?: "keep" | "excluded" | "duplicate";
   duplicate_of?: string;
   topics?: string[];
   tone?: string;
@@ -23,42 +23,13 @@ interface ApprovePayload {
   curator_note?: string;
   user_id?: string;
   user_name?: string;
-  adopted_from?: "judge4" | "judge5" | "consensus" | "manual";
+  adopted_from?: "judge4" | "consensus" | "manual";
 }
 
 interface JudgeIdentity {
   id: string;
   username: string;
   display_name: string;
-}
-
-interface CurationRow extends HumanVote {
-  user_name: string;
-  topics: string[];
-  tone: string | null;
-  humour_mechanisms: string[];
-  curator_note: string | null;
-}
-
-interface StoredCurationRow {
-  user_id: string;
-  user_name: string;
-  corpus_status: HumanVote["corpus_status"];
-  duplicate_of: string | null;
-  topics: string | null;
-  tone: string | null;
-  humour_mechanisms: string | null;
-  curator_note: string | null;
-}
-
-function parseArray(value: string | null): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch {
-    return [];
-  }
 }
 
 let tablesEnsured = false;
@@ -75,52 +46,75 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const corpusStatus = body.corpus_status;
 
     if (!memeId) return json({ error: "meme_id is required." }, { status: 400 });
-    if (!corpusStatus || !["keep", "excluded", "duplicate", "review_later"].includes(corpusStatus)) {
-      return json({ error: "corpus_status must be 'keep', 'excluded', 'duplicate', or 'review_later'." }, { status: 400 });
+    
+    // Exactly three options: keep, excluded, duplicate. review_later is rejected.
+    if (!corpusStatus || !["keep", "excluded", "duplicate"].includes(corpusStatus)) {
+      return json({ error: "corpus_status must be 'keep', 'excluded', or 'duplicate'. review_later is not permitted." }, { status: 400 });
+    }
+
+    // Verify meme exists and is in ARCHIVE state
+    const memeRow = await env.DB.prepare(
+      "SELECT id, corpus_status FROM memes WHERE id = ?"
+    ).bind(memeId).first<{ id: string; corpus_status: string }>();
+
+    if (!memeRow) {
+      return json({ error: "Meme not found." }, { status: 404 });
+    }
+
+    if (memeRow.corpus_status !== "archive") {
+      return json({
+        error: "not_in_archive",
+        message: `Vote cannot be accepted: meme is in state '${memeRow.corpus_status}', not 'archive'.`
+      }, { status: 409 });
     }
 
     const ingestionState = await getIngestionJobState(env.DB, memeId);
     if (ingestionState && ingestionState !== "human_ready") {
       return json({
-        error: "This new intake item is not human-ready yet. The AI advisory evaluation must succeed before a human vote is accepted.",
+        error: "This new intake item is not human-ready yet. Advisory evaluation must succeed before human votes are accepted.",
         ingestion_state: ingestionState
       }, { status: 409 });
+    }
+
+    // Guard: if meme has been force-removed, return 410
+    const isRemoved = await env.DB.prepare(
+      "SELECT r2_deleted FROM meme_force_removals WHERE meme_id = ?"
+    ).bind(memeId).first<{ r2_deleted: number }>();
+
+    if (isRemoved) {
+      return json(
+        { error: "meme_removed", message: "This meme has been permanently force-removed." },
+        { status: 410 }
+      );
     }
 
     const { results: judgeRows } = await env.DB.prepare(`
       SELECT id, username, display_name
       FROM cat_users
-      WHERE role = 'judge' AND (username IN ('judge1', 'judge2', 'judge3', 'judge4', 'ai-judge') OR id = 'user-judge4')
+      WHERE role = 'judge' AND username IN ('judge1', 'judge2', 'judge3')
     `).all<JudgeIdentity>();
     const judgeByUsername = new Map((judgeRows || []).map((judge) => [judge.username, judge]));
     const humanJudges = ["judge1", "judge2", "judge3"].map((username) => judgeByUsername.get(username));
     if (humanJudges.some((judge) => !judge)) {
-      return json({ error: "The three configured human judges are not present in cat_users." }, { status: 503 });
+      return json({ error: "The three designated human judges (judge1, judge2, judge3) are not configured." }, { status: 503 });
     }
-    const humanJudgeIdentities = humanJudges as JudgeIdentity[];
-    const humanJudgeIds = humanJudgeIdentities.map((judge) => judge.id);
-    const judge4 = judgeByUsername.get("ai-judge") || judgeByUsername.get("judge4") || (judgeRows || []).find((j) => j.id === "user-judge4");
 
+    const judge1 = judgeByUsername.get("judge1");
+    const userId = sessionUser?.id || (body.user_id ? body.user_id.trim() : judge1?.id || "user-judge1");
+    const userName = sessionUser?.display_name || (body.user_name && body.user_name.trim() !== "Judge" ? body.user_name.trim() : judge1?.display_name || "Judge One");
 
-    if (sessionUser && (sessionUser.role !== "judge" || !humanJudgeIds.includes(sessionUser.id))) {
-      return json({ error: "Only Judges 1, 2, or 3 may submit a human curation vote." }, { status: 403 });
-    }
-    const userId = sessionUser?.id || (body.user_id ? body.user_id.trim() : humanJudgeIds[0]);
-    if (!humanJudgeIds.includes(userId)) {
-      return json({ error: "A configured human judge identity is required." }, { status: 403 });
-    }
-    const userName = sessionUser?.display_name ||
-      humanJudgeIdentities.find((judge) => judge.id === userId)?.display_name ||
-      (body.user_name && body.user_name.trim() !== "Judge" ? body.user_name.trim() : "Judge");
-
-    const topics = (Array.isArray(body.topics) ? body.topics : []).filter(Boolean).slice(0, 3);
+    const rawTopics = Array.isArray(body.topics) ? body.topics.filter(Boolean) : [];
+    const topics = rawTopics.slice(0, 3);
     const tone = (body.tone || "").trim() || null;
-    const mechanisms = (Array.isArray(body.humour_mechanisms) ? body.humour_mechanisms : []).filter(Boolean).slice(0, 2);
+    const rawMechanisms = Array.isArray(body.humour_mechanisms) ? body.humour_mechanisms.filter(Boolean) : [];
+    const mechanisms = rawMechanisms.slice(0, 2);
     const duplicateOf = (body.duplicate_of || "").trim() || null;
     const curatorNote = (body.curator_note || "").trim() || null;
     const now = new Date().toISOString();
+    const curId = `cur-${crypto.randomUUID().slice(0, 8)}`;
 
-    const stmtCuration = env.DB.prepare(`
+    // Upsert vote into meme_curation
+    await env.DB.prepare(`
       INSERT INTO meme_curation (
         id, meme_id, user_id, user_name, corpus_status, duplicate_of,
         topics, tone, humour_mechanisms, curator_note, reviewed_at, updated_at
@@ -136,7 +130,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         user_name = excluded.user_name,
         updated_at = excluded.updated_at
     `).bind(
-      `cur-${crypto.randomUUID().slice(0, 8)}`,
+      curId,
       memeId,
       userId,
       userName,
@@ -147,154 +141,67 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       JSON.stringify(mechanisms),
       curatorNote,
       now,
-      now,
-    );
+      now
+    ).run();
 
-    const aiJudgeIds = [judge4?.id].filter((id): id is string => Boolean(id));
-    const voteIds = [...humanJudgeIds, ...aiJudgeIds];
-    const placeholders = voteIds.map(() => "?").join(", ");
-    const stmtVotes = env.DB.prepare(`
-      SELECT user_id, user_name, corpus_status, duplicate_of, topics, tone, humour_mechanisms, curator_note
-      FROM meme_curation
-      WHERE meme_id = ? AND user_id IN (${placeholders})
-    `).bind(memeId, ...voteIds);
+    // Trigger authoritative consensus resolution
+    const consensusRes = await applyConsensus(env, memeId);
 
-    // D1 batches execute in order as one transaction. Keeping the upsert and
-    // count read together prevents two concurrent final judges from both
-    // observing only two votes and leaving a fully-voted meme unfinalized.
-    const voteBatch = await env.DB.batch([stmtCuration, stmtVotes]);
-    const rows = (voteBatch[1]?.results || []) as StoredCurationRow[];
-    const votes: CurationRow[] = rows
-      .filter((row) => humanJudgeIds.includes(row.user_id))
-      .map((row) => ({
-        user_id: row.user_id,
-        user_name: row.user_name,
-        corpus_status: row.corpus_status,
-        duplicate_of: row.duplicate_of,
-        topics: parseArray(row.topics),
-        tone: row.tone,
-        humour_mechanisms: parseArray(row.humour_mechanisms),
-        curator_note: row.curator_note,
-      }));
-
-    if (votes.length < 3) {
+    if (consensusRes.outcome === "pending") {
+      const votesCnt = Number(consensusRes.split?.replace("votes:", "") || 1);
       return json({
         success: true,
         meme_id: memeId,
         user_id: userId,
         user_name: userName,
         corpus_status: corpusStatus,
-        votes_received: votes.length,
+        votes_received: votesCnt,
         votes_required: 3,
         is_final: false,
-        outcome: "pending",
+        outcome: "pending"
       });
     }
 
-    const aiRow = (id?: string): StoredCurationRow | undefined => rows.find((row) => row.user_id === id);
-    const aiDecision = (row?: StoredCurationRow) => row ? {
-      topics: parseArray(row.topics),
-      tone: row.tone,
-      humour_mechanisms: parseArray(row.humour_mechanisms),
-    } : null;
-    const ai: AiFallback = {
-      judge4: aiDecision(aiRow(judge4?.id)),
-
-    };
-    const consensus = resolveHumanConsensus(votes, ai);
-
-    if (consensus.kind === "arbitration") {
+    if (consensusRes.outcome === "purged") {
       return json({
         success: true,
         meme_id: memeId,
         user_id: userId,
-        votes_received: votes.length,
+        user_name: userName,
+        votes_received: 3,
         votes_required: 3,
-        is_final: false,
-        outcome: "arbitration",
-        arbitration_reason: consensus.reason,
+        is_final: true,
+        outcome: "purged",
+        split: consensusRes.split
       });
     }
 
-    if (consensus.kind === "pending") {
-      return json({ success: true, meme_id: memeId, votes_received: votes.length, votes_required: 3, is_final: false, outcome: "pending" });
+    if (consensusRes.outcome === "conflict") {
+      return json({
+        success: true,
+        meme_id: memeId,
+        user_id: userId,
+        user_name: userName,
+        votes_received: 3,
+        votes_required: 3,
+        is_final: false,
+        outcome: "arbitration",
+        split: consensusRes.split
+      });
     }
 
-    const isHardRemove = consensus.kind === "hard_remove";
-    const resolvedStatus = consensus.corpus_status;
-    const resolvedTopics = isHardRemove ? [] : consensus.topics;
-    const resolvedTone = isHardRemove ? null : consensus.tone;
-    const resolvedMechanisms = isHardRemove ? [] : consensus.humour_mechanisms;
-    const resolvedDuplicateOf = isHardRemove ? null : consensus.duplicate_of;
-    const adoptedTag = body.adopted_from ? `; latest vote adopted ${body.adopted_from}` : "";
-    const resolvedBy = `3-Judge Majority (${humanJudgeIdentities.map((judge) => judge.display_name).join(", ")})${adoptedTag}`;
-    const isActive = resolvedStatus === "keep" ? 1 : 0;
-    const newStatus = resolvedStatus === "keep" ? "active" : "archived";
-    const statements: D1PreparedStatement[] = [];
-
-    if (resolvedStatus === "keep" || resolvedStatus === "excluded") {
-      statements.push(env.DB.prepare(`
-        INSERT INTO meme_curation_final (
-          meme_id, corpus_status, duplicate_of, topics, tone, humour_mechanisms,
-          curator_note, resolved_by, resolved_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(meme_id) DO UPDATE SET
-          corpus_status = excluded.corpus_status,
-          duplicate_of = excluded.duplicate_of,
-          topics = excluded.topics,
-          tone = excluded.tone,
-          humour_mechanisms = excluded.humour_mechanisms,
-          curator_note = excluded.curator_note,
-          resolved_by = excluded.resolved_by,
-          resolved_at = excluded.resolved_at,
-          updated_at = excluded.updated_at
-      `).bind(
-        memeId,
-        resolvedStatus,
-        resolvedDuplicateOf,
-        JSON.stringify(resolvedTopics),
-        resolvedTone,
-        JSON.stringify(resolvedMechanisms),
-        curatorNote,
-        resolvedBy,
-        now,
-        now,
-      ));
-    }
-
-    if (resolvedStatus === "keep" && resolvedTopics.length > 0) {
-      statements.push(env.DB.prepare(`
-        UPDATE memes
-        SET is_active = ?, status = ?, curation_status = ?, duplicate_of = ?, topics = ?, tone = ?, humour_mechanisms = ?, tags = ?, category = COALESCE(?, category)
-        WHERE id = ?
-      `).bind(isActive, newStatus, resolvedStatus, resolvedDuplicateOf, JSON.stringify(resolvedTopics), resolvedTone, JSON.stringify(resolvedMechanisms), JSON.stringify(resolvedTopics), resolvedTopics[0], memeId));
-    } else {
-      statements.push(env.DB.prepare(`
-        UPDATE memes
-        SET is_active = ?, status = ?, curation_status = ?, duplicate_of = ?, topics = ?, tone = ?, humour_mechanisms = ?
-        WHERE id = ?
-      `).bind(isActive, newStatus, resolvedStatus, resolvedDuplicateOf, JSON.stringify(resolvedTopics), resolvedTone, JSON.stringify(resolvedMechanisms), memeId));
-    }
-
-    await env.DB.batch(statements);
-    if (isHardRemove) {
-      await hardRemoveMeme(env, memeId, "Unanimous 3:0 excluded by Judges 1, 2, and 3");
-    }
-
+    // Finalized into active or excluded
     return json({
       success: true,
       meme_id: memeId,
       user_id: userId,
       user_name: userName,
-      corpus_status: resolvedStatus,
-      topics: resolvedTopics,
-      tone: resolvedTone,
-      humour_mechanisms: resolvedMechanisms,
-      duplicate_of: resolvedDuplicateOf,
+      corpus_status: consensusRes.outcome,
       votes_received: 3,
       votes_required: 3,
       is_final: true,
-      outcome: isHardRemove ? "hard_removed" : "finalized",
+      outcome: "finalized",
+      split: consensusRes.split
     });
   } catch (err: unknown) {
     return handleD1Error(err, "Error approving curation decision");

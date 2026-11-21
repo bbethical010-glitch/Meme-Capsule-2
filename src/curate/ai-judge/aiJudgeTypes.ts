@@ -107,7 +107,7 @@ export interface AiJudgeConfig {
   previewDelayMs: number; // e.g. 1500ms visual countdown pause
   batchMode: "endless" | "count";
   batchCount: number; // e.g. 25 memes
-  lowConfidenceFallback: "review_later" | "excluded";
+  lowConfidenceFallback: "excluded";
   confidenceThreshold: number; // e.g. 0.6
   activePresetId?: string | null;
   customInstructions?: string; // Pre-build batch instructions for AI judge
@@ -122,7 +122,7 @@ export const DEFAULT_AI_JUDGE_CONFIG: AiJudgeConfig = {
   previewDelayMs: 1500,
   batchMode: "endless",
   batchCount: 25,
-  lowConfidenceFallback: "review_later",
+  lowConfidenceFallback: "excluded",
   confidenceThreshold: 0.6,
   activePresetId: null,
   customInstructions: ""

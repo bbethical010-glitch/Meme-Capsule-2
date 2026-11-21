@@ -205,8 +205,8 @@ export default function CuratorResolveModal({
               <div style={{ fontSize: "13px", fontFamily: "Anton", color: "#f4c300", marginBottom: "8px" }}>
                 AUTHORITATIVE EDITORIAL STATUS
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px" }}>
-                {(["keep", "excluded", "duplicate", "review_later"] as CorpusStatus[]).map((s) => (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
+                {(["keep", "excluded", "duplicate"] as CorpusStatus[]).map((s) => (
                   <button
                     key={s}
                     type="button"

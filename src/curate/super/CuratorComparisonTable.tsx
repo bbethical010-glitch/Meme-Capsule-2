@@ -8,6 +8,14 @@ interface CuratorComparisonTableProps {
   onRefresh: () => void;
 }
 
+function formatPurgeRemaining(purgeAt: string): string {
+  const diff = new Date(purgeAt).getTime() - Date.now();
+  if (diff <= 0) return "PURGE DUE";
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  return `PURGES IN ${days}d ${hours}h`;
+}
+
 export default function CuratorComparisonTable({
   memes,
   loading,
@@ -18,35 +26,21 @@ export default function CuratorComparisonTable({
   const getStatusColor = (status: string | null) =>
     status === "keep" ? "#34C759" : status === "excluded" ? "#FF3B30" : "#FF9F0A";
 
-  const getStatusLabel = (status: string | null) => {
-    if (status === "excluded") return "EXCLUDE";
-    if (status === "review_later") return "REVIEW_LATER";
-    return status ? status.toUpperCase() : "ANALYSED";
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "resolved":
-        return <span style={{ background: "#34C759", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>✓ RESOLVED</span>;
-      case "unanimous_keep":
-        return <span style={{ background: "#9b30ff", color: "#fff", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>UNANIMOUS KEEP</span>;
-      case "unanimous_exclude":
-        return <span style={{ background: "#FF3B30", color: "#fff", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>UNANIMOUS EXCLUDE</span>;
-      case "majority_keep":
-        return <span style={{ background: "#007AFF", color: "#fff", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>2:1 MAJORITY KEEP</span>;
-      case "majority_exclude":
-        return <span style={{ background: "#FF9500", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>2:1 MAJORITY EXCLUDE</span>;
-      case "unanimous_duplicate":
-      case "majority_duplicate":
-        return <span style={{ background: "#FF9F0A", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>DUPLICATE CONSENSUS</span>;
+  const getStatusBadge = (status: string, corpusStatus?: string) => {
+    const effective = corpusStatus || status;
+    switch (effective) {
+      case "active":
+        return <span style={{ background: "#34C759", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>✓ ACTIVE</span>;
+      case "archive":
+        return <span style={{ background: "#f4c300", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>ARCHIVE (VOTING)</span>;
+      case "draft":
+        return <span style={{ background: "#8e8e93", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>DRAFT (AI PENDING)</span>;
+      case "excluded":
+        return <span style={{ background: "#FF3B30", color: "#fff", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>EXCLUDED</span>;
       case "conflict":
-        return <span style={{ background: "#FF453A", color: "#fff", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>⚠️ 1:1:1 CONFLICT</span>;
-      case "single_review":
-        return <span style={{ background: "#444", color: "#ddd", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>1 REVIEW</span>;
-      case "pending_reviews":
-        return <span style={{ background: "#262626", color: "#aaa", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>PENDING REVIEWS</span>;
+        return <span style={{ background: "#FF9500", color: "#121212", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>⚠️ 1:1:1 CONFLICT</span>;
       default:
-        return <span style={{ background: "#262626", color: "#888", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>UNREVIEWED</span>;
+        return <span style={{ background: "#262626", color: "#888", padding: "2px 6px", fontFamily: "Anton", fontSize: "10px" }}>{String(effective).toUpperCase()}</span>;
     }
   };
 
@@ -57,10 +51,10 @@ export default function CuratorComparisonTable({
           <tr style={{ background: "#222", borderBottom: "2px solid #9b30ff", color: "#f4c300", fontFamily: "Anton", letterSpacing: "0.5px" }}>
             <th style={{ padding: "12px 14px", width: "80px" }}>PREVIEW</th>
             <th style={{ padding: "12px 14px", width: "220px" }}>MEME INFO</th>
-            <th style={{ padding: "12px 14px", width: "140px" }}>CONSENSUS</th>
+            <th style={{ padding: "12px 14px", width: "140px" }}>CORPUS STATE</th>
             <th style={{ padding: "12px 14px" }}>JUDGES DECISIONS</th>
-            <th style={{ padding: "12px 14px", width: "180px" }}>FINAL RESOLUTION</th>
-            <th style={{ padding: "12px 14px", width: "120px", textAlign: "right" }}>ACTION</th>
+            <th style={{ padding: "12px 14px", width: "180px" }}>CONSENSUS / REASON</th>
+            <th style={{ padding: "12px 14px", width: "140px", textAlign: "right" }}>ACTION</th>
           </tr>
         </thead>
         <tbody>
@@ -99,9 +93,9 @@ export default function CuratorComparisonTable({
                   <div style={{ fontWeight: "bold", color: "#fff", marginTop: "2px" }}>{m.title}</div>
                 </td>
 
-                {/* Consensus Status */}
+                {/* State Badge */}
                 <td style={{ padding: "10px 14px" }}>
-                  {getStatusBadge(m.consensus_status)}
+                  {getStatusBadge(m.consensus_status, m.corpus_status)}
                 </td>
 
                 {/* Judges Submissions */}
@@ -146,46 +140,93 @@ export default function CuratorComparisonTable({
                   </div>
                 </td>
 
-                {/* Final Decision */}
+                {/* Consensus / Reason */}
                 <td style={{ padding: "10px 14px" }}>
-                  {m.final_decision ? (
-                    <div>
-                      <span style={{ color: "#34C759", fontWeight: "bold", textTransform: "uppercase" }}>
-                        {m.final_decision.corpus_status}
-                      </span>
-                      {m.final_decision.tone && (
-                        <span style={{ color: "#f4c300", fontSize: "10px", marginLeft: "6px" }}>
-                          ({m.final_decision.tone})
-                        </span>
-                      )}
-                      {m.final_decision.topics.length > 0 && (
-                        <div style={{ fontSize: "10px", color: "#888", marginTop: "2px" }}>
-                          {m.final_decision.topics.join(", ")}
-                        </div>
-                      )}
+                  {m.corpus_status === "excluded" && (
+                    <div style={{ color: "#FF3B30", fontSize: "11px" }}>
+                      <div>Reason: {m.exclusion_reason || "consensus"}</div>
                     </div>
-                  ) : (
-                    <span style={{ color: "#666", fontStyle: "italic" }}>Not resolved</span>
+                  )}
+                  {m.corpus_status === "conflict" && (
+                    <div style={{ color: "#FF9500", fontSize: "11px", fontWeight: "bold" }}>
+                      1:1:1 SPLIT ACROSS JUDGES
+                    </div>
+                  )}
+                  {m.corpus_status === "active" && (
+                    <div style={{ color: "#34C759", fontSize: "11px" }}>
+                      Keep Consensus (Live in App)
+                    </div>
+                  )}
+                  {m.corpus_status === "archive" && (
+                    <div style={{ color: "#f4c300", fontSize: "11px" }}>
+                      {m.judges.length}/3 Human Votes
+                    </div>
+                  )}
+                  {m.corpus_status === "draft" && (
+                    <div style={{ color: "#8e8e93", fontSize: "11px" }}>
+                      Intake Draft (Awaiting AI)
+                    </div>
                   )}
                 </td>
 
                 {/* Action */}
                 <td style={{ padding: "10px 14px", textAlign: "right" }}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedMeme(m)}
-                    style={{
-                      background: m.final_decision ? "#262626" : "#9b30ff",
-                      color: "#fff",
-                      border: "1px solid #f4c300",
-                      padding: "6px 12px",
-                      fontFamily: "Anton",
-                      fontSize: "11px",
-                      cursor: "pointer"
-                    }}
-                  >
-                    {m.final_decision ? "EDIT RESOLUTION" : "ARBITRATE ➔"}
-                  </button>
+                  {m.corpus_status === "excluded" ? (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
+                      {m.purge_at && (
+                        <span style={{ fontSize: "10px", color: "#ff3b30", fontFamily: "monospace", fontWeight: "bold" }}>
+                          {formatPurgeRemaining(m.purge_at)}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMeme(m)}
+                        style={{
+                          background: "#262626",
+                          color: "#fff",
+                          border: "1px solid #FF3B30",
+                          padding: "4px 8px",
+                          fontFamily: "Anton",
+                          fontSize: "11px",
+                          cursor: "pointer"
+                        }}
+                      >
+                        EDIT VOTE
+                      </button>
+                    </div>
+                  ) : m.corpus_status === "conflict" ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMeme(m)}
+                      style={{
+                        background: "#9b30ff",
+                        color: "#fff",
+                        border: "1px solid #f4c300",
+                        padding: "6px 12px",
+                        fontFamily: "Anton",
+                        fontSize: "11px",
+                        cursor: "pointer"
+                      }}
+                    >
+                      ARBITRATE ➔
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMeme(m)}
+                      style={{
+                        background: "#262626",
+                        color: "#888",
+                        border: "1px solid #444",
+                        padding: "4px 8px",
+                        fontFamily: "Anton",
+                        fontSize: "10px",
+                        cursor: "pointer"
+                      }}
+                    >
+                      VIEW
+                    </button>
+                  )}
                 </td>
               </tr>
             ))

@@ -3,6 +3,8 @@
  * 
  * Saves editorial judgment and multi-dimensional categorization for a meme.
  * Tracks user_id and user_name for multi-curator workflows.
+ * Accepts votes only while the meme is in 'archive'.
+ * Triggers applyConsensus on every vote.
  */
 
 import type { PagesFunction } from "../../_shared/pages";
@@ -10,12 +12,13 @@ import { json, handleD1Error, type Env } from "../../_shared/d1r2";
 import { validateSession } from "../../_shared/catAuth";
 import { ensureCurationTables } from "../../_shared/curateDb";
 import { getIngestionJobState } from "../../_shared/ingestion";
+import { applyConsensus } from "../../_shared/corpus";
 
 interface SavePayload {
   meme_id?: string;
   moderation_only?: boolean;
   is_nsfw?: boolean;
-  corpus_status?: "keep" | "excluded" | "duplicate" | "review_later";
+  corpus_status?: "keep" | "excluded" | "duplicate";
   duplicate_of?: string;
   topics?: string[];
   tone?: string;
@@ -54,14 +57,31 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return json({ success: true, meme_id: memeId, is_nsfw: body.is_nsfw, nsfw_flagged_by: flaggedBy });
     }
 
-    if (!corpusStatus || !["keep", "excluded", "duplicate", "review_later"].includes(corpusStatus)) {
-      return json({ error: "corpus_status must be 'keep', 'excluded', 'duplicate', or 'review_later'." }, { status: 400 });
+    // REVIEW LATER removed everywhere. Exactly KEEP / EXCLUDE / DUPLICATE accepted.
+    if (!corpusStatus || !["keep", "excluded", "duplicate"].includes(corpusStatus)) {
+      return json({ error: "corpus_status must be 'keep', 'excluded', or 'duplicate'. review_later is not permitted." }, { status: 400 });
+    }
+
+    // Verify meme exists and is in ARCHIVE state
+    const memeRow = await env.DB.prepare(
+      "SELECT id, corpus_status FROM memes WHERE id = ?"
+    ).bind(memeId).first<{ id: string; corpus_status: string }>();
+
+    if (!memeRow) {
+      return json({ error: "Meme not found." }, { status: 404 });
+    }
+
+    if (memeRow.corpus_status !== "archive") {
+      return json({
+        error: "not_in_archive",
+        message: `Vote cannot be saved: meme is currently in state '${memeRow.corpus_status}', not 'archive'.`
+      }, { status: 409 });
     }
 
     const ingestionState = await getIngestionJobState(env.DB, memeId);
     if (ingestionState && ingestionState !== "human_ready") {
       return json({
-        error: "This new intake item is not human-ready yet. Both advisory evaluations must succeed before a human vote is accepted.",
+        error: "This new intake item is not human-ready yet. Advisory evaluations must succeed before a human vote is accepted.",
         ingestion_state: ingestionState
       }, { status: 409 });
     }
@@ -127,11 +147,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       now
     ).run();
 
-    // 2. Reflect corpus status into main memes table active flag
-    const isActive = corpusStatus === "keep" ? 1 : 0;
-    await env.DB.prepare(
-      "UPDATE memes SET is_active = ? WHERE id = ?"
-    ).bind(isActive, memeId).run();
+    // 2. Trigger automatic consensus evaluation & state transition
+    const consensusRes = await applyConsensus(env, memeId);
 
     return json({
       success: true,
@@ -141,7 +158,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       corpus_status: corpusStatus,
       topics,
       tone,
-      humour_mechanisms: mechanisms
+      humour_mechanisms: mechanisms,
+      consensus: consensusRes
     });
   } catch (err: unknown) {
     return handleD1Error(err, "Error saving curation decision");

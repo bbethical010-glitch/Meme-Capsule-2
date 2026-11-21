@@ -624,3 +624,35 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
   - Added automated unit tests in `tests/aiJudgeQueues.test.ts` verifying human batch queue eligibility and no-repeat guarantees.
   - `npm run build` compiled cleanly with zero TypeScript errors.
   - All 41 unit and consensus tests passing (`npm test`).
+
+## 21. Corpus Restructure (v2) — 5-State Lifecycle, Single State Writer, Path Equivalence & Unified Counts (November 21, 2026)
+
+- **1. Five Mutually Exclusive States**:
+  - Implemented exact 5-state partition: `draft`, `archive`, `active`, `conflict`, `excluded`.
+  - Mathematical Invariant: `TOTAL = draft + archive + active + conflict + excluded`.
+  - Removed dual-counting, intermediate states, and all references to `review_later`.
+  - Active memes are strictly those finalized as KEEP by human majority (2:1 or 3:0) or Superadmin arbitration.
+
+- **2. Single State Writer & Single Intake Invariants**:
+  - Created `functions/_shared/corpus.ts`: the single authoritative writer for corpus state via `transitionMeme()`, `applyConsensus()`, and `purgeMeme()`.
+  - Created `functions/_shared/intake.ts`: the single intake pipeline enforcing the Path Equivalence Invariant across R2 sync, admin uploads, and CLI ingestion.
+  - Added enforcement test `scripts/check-state-writers.ts` ensuring zero unauthorized state writes across `functions/`.
+
+- **3. Schema Migration 029 (`d1/migrations/029_corpus_restructure.sql`)**:
+  - Added `corpus_status`, `content_hash`, `excluded_at`, `purge_at`, `exclusion_reason` to `memes`.
+  - Created audit tables: `meme_state_log`, `meme_purge_log`, `corpus_maintenance_runs`, and `curation_legacy_later_votes`.
+  - Created indices for performance and uniqueness.
+
+- **4. Single Source of Truth Summary & Shared Category Cards**:
+  - Created `GET /api/admin/corpus/summary` computing live 5-state distribution, total, integrity, per-judge stats, and AI judge metrics.
+  - Rebuilt SuperAdmin summary (`/api/curate/super/summary`) to return the exact same canonical summary.
+  - Created shared React component `CorpusCategoryCards` and hook `useCorpusSummary`, rendering identical cards and numbers on Admin and SuperAdmin portals.
+
+- **5. Clean Purge Pipeline & Curation Maintenance Worker**:
+  - `purgeMeme()` deletes physical R2 object first, cascades through all 12 dependent child tables, logs to `meme_purge_log`, and leaves D1 untouched if R2 deletion fails.
+  - Created `workers/curationMaintenance.ts` and `workers/wrangler.curation.toml` (hourly cron) to settle unfinalized archive 3-vote memes, purge 7-day expired exclusions, and prune audit logs older than 180 days.
+
+- **6. Verification & Automated Tests**:
+  - 83 Vitest tests + 9 Node consensus tests passing (92/92 passing).
+  - TypeScript type check (`tsc --noEmit`) and Vite production build (`npm run build`) passing 100% with zero errors.
+  - Single state writer invariant satisfied with 0 violations.
