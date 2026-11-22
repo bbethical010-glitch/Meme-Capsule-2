@@ -410,7 +410,7 @@ export default function AdminApp() {
     if (adminToken.trim()) {
       loadBackend();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const stats = useMemo(() => {
@@ -721,6 +721,39 @@ export default function AdminApp() {
       refreshCorpusSummary();
     } catch (err: any) {
       setNotice(err?.message || "Error verifying intake.");
+    } finally {
+      setIsExecutingDraftAction(false);
+    }
+  };
+
+  const handleClassifyLegacyCorpus = async () => {
+    if (!adminToken) {
+      setNotice("Admin API token is required to classify legacy corpus.");
+      return;
+    }
+    if (!window.confirm("Run legacy classification migration? This will classify legacy memes into active, archive, conflict, and excluded based on consensus and AI review.")) {
+      return;
+    }
+    setIsExecutingDraftAction(true);
+    setNotice("Classifying legacy corpus (moving from default draft to active, archive, conflict, excluded)...");
+    try {
+      const res = await fetch("/api/admin/corpus/migrate-legacy", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+          "X-Admin-Token": adminToken
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed running legacy migration.");
+      }
+      setNotice(`Migration successful! New distribution: ${data.after.active} Active, ${data.after.archive} Archive, ${data.after.conflict} Conflict, ${data.after.excluded} Excluded, ${data.after.draft} Draft.`);
+      await loadBackend();
+      refreshCorpusSummary();
+    } catch (err: any) {
+      setNotice(err?.message || "Error running legacy migration.");
     } finally {
       setIsExecutingDraftAction(false);
     }
@@ -1268,6 +1301,24 @@ export default function AdminApp() {
                             title="Verify intake files in R2 (MIME, SHA-256, Duplicates)"
                           >
                             🔍 VERIFY INTAKE
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleClassifyLegacyCorpus}
+                            disabled={isExecutingDraftAction}
+                            className="brutalist-border-sm"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              background: "#16a34a",
+                              color: "#fff",
+                              border: "1px solid #4ade80",
+                              cursor: isExecutingDraftAction ? "not-allowed" : "pointer"
+                            }}
+                            title="Classify legacy draft memes into active, archive, conflict, and excluded"
+                          >
+                            🚀 CLASSIFY LEGACY CORPUS
                           </button>
                         </div>
                       )}

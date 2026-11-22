@@ -12,7 +12,11 @@ export function useCorpusSummary(authToken?: string) {
       setError(null);
 
       const headers: Record<string, string> = {};
-      const token = authToken || (typeof window !== "undefined" ? window.sessionStorage.getItem("admin_token") || window.sessionStorage.getItem("curator_token") : null);
+      const token = authToken || (typeof window !== "undefined"
+        ? window.sessionStorage.getItem("meme-capsule:admin-api-token")
+          || window.sessionStorage.getItem("curator_token")
+          || window.sessionStorage.getItem("admin_token")
+        : null);
       if (token) {
         const cleanToken = token.replace(/^Bearer\s+/i, "").trim();
         headers["Authorization"] = `Bearer ${cleanToken}`;

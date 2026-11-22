@@ -670,3 +670,140 @@ export async function getCorpusSummary(env: Env): Promise<CorpusSummaryData> {
     }
   };
 }
+
+/**
+ * Execute Legacy Data Migration (Step 11).
+ * Translates legacy memes (which currently have default 'draft') into their
+ * correct authoritative 5-state values: active, archive, conflict, excluded, draft.
+ * Fully compliant with Single State Writer rule (defined in functions/_shared/corpus.ts).
+ */
+export async function runLegacyDataMigration(env: Env, actor: string = "migration"): Promise<{
+  before: Record<string, number>;
+  after: CorpusSummaryData;
+  actions: Record<string, number>;
+}> {
+  const beforeSummary = await getCorpusSummary(env);
+
+  const actions = {
+    review_later_archived: 0,
+    rule0_legacy_live: 0,
+    rule2_consensus_keep: 0,
+    rule2_consensus_exclude: 0,
+    rule2_consensus_conflict: 0,
+    rule3_ai_promoted_archive: 0
+  };
+
+  // Step 1: Move review_later votes into audit table and remove from active curation
+  try {
+    const laterVotes = await env.DB.prepare(`
+      INSERT OR IGNORE INTO curation_legacy_later_votes (original_vote_id, meme_id, user_id, user_name, corpus_status, duplicate_of, topics, tone, humour_mechanisms, curator_note, reviewed_at, archived_at)
+      SELECT id, meme_id, user_id, user_name, corpus_status, duplicate_of, topics, tone, humour_mechanisms, curator_note, reviewed_at, CURRENT_TIMESTAMP
+      FROM meme_curation WHERE corpus_status = 'review_later'
+    `).run();
+    actions.review_later_archived = Number(laterVotes.meta?.changes) || 0;
+    await env.DB.prepare("DELETE FROM meme_curation WHERE corpus_status = 'review_later'").run();
+  } catch {}
+
+  // Step 2: Rule 0 - Active memes with final ledger keep
+  const r0 = await env.DB.prepare(`
+    UPDATE memes 
+    SET corpus_status = 'active', is_active = 1, status = 'active'
+    WHERE is_active = 1 AND status = 'active' AND id IN (
+      SELECT meme_id FROM meme_curation_final WHERE corpus_status = 'keep'
+    )
+  `).run();
+  actions.rule0_legacy_live = Number(r0.meta?.changes) || 0;
+
+  // Step 3: Rule 2A - Human consensus keep >= 2
+  const r2a = await env.DB.prepare(`
+    UPDATE memes
+    SET corpus_status = 'active', is_active = 1, status = 'active'
+    WHERE corpus_status = 'draft' AND id IN (
+      SELECT c.meme_id
+      FROM meme_curation c
+      JOIN cat_users u ON c.user_id = u.id
+      WHERE u.username IN ('judge1', 'judge2', 'judge3') AND c.corpus_status = 'keep'
+      GROUP BY c.meme_id
+      HAVING COUNT(*) >= 2
+    )
+  `).run();
+  actions.rule2_consensus_keep = Number(r2a.meta?.changes) || 0;
+
+  // Step 4: Rule 2B - Human consensus exclude/duplicate >= 2
+  const r2b = await env.DB.prepare(`
+    UPDATE memes
+    SET corpus_status = 'excluded', is_active = 0, status = 'archived',
+        excluded_at = CURRENT_TIMESTAMP,
+        purge_at = datetime('now', '+7 days'),
+        exclusion_reason = 'legacy_consensus_exclude'
+    WHERE corpus_status = 'draft' AND id IN (
+      SELECT c.meme_id
+      FROM meme_curation c
+      JOIN cat_users u ON c.user_id = u.id
+      WHERE u.username IN ('judge1', 'judge2', 'judge3') AND c.corpus_status IN ('excluded', 'duplicate')
+      GROUP BY c.meme_id
+      HAVING COUNT(*) >= 2
+    )
+  `).run();
+  actions.rule2_consensus_exclude = Number(r2b.meta?.changes) || 0;
+
+  // Step 5: Rule 2C - Human consensus split 1:1:1
+  const r2c = await env.DB.prepare(`
+    UPDATE memes
+    SET corpus_status = 'conflict', is_active = 0, status = 'archived'
+    WHERE corpus_status = 'draft' AND id IN (
+      SELECT c.meme_id
+      FROM meme_curation c
+      JOIN cat_users u ON c.user_id = u.id
+      WHERE u.username IN ('judge1', 'judge2', 'judge3')
+      GROUP BY c.meme_id
+      HAVING COUNT(*) = 3 
+         AND COUNT(DISTINCT c.corpus_status) = 3
+    )
+  `).run();
+  actions.rule2_consensus_conflict = Number(r2c.meta?.changes) || 0;
+
+  // Step 6: Rule 3 - AI Judge succeeded evaluation -> archive
+  const r3 = await env.DB.prepare(`
+    UPDATE memes
+    SET corpus_status = 'archive', is_active = 0, status = 'archived'
+    WHERE corpus_status = 'draft' AND id IN (
+      SELECT DISTINCT meme_id 
+      FROM ingestion_ai_evaluations 
+      WHERE state = 'succeeded'
+    )
+  `).run();
+  actions.rule3_ai_promoted_archive = Number(r3.meta?.changes) || 0;
+
+  // Ensure meme_curation_final has a keep record for all newly active memes
+  try {
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO meme_curation_final (meme_id, corpus_status, resolved_at)
+      SELECT id, 'keep', CURRENT_TIMESTAMP
+      FROM memes
+      WHERE corpus_status = 'active'
+    `).run();
+  } catch {}
+
+  // Record maintenance run
+  const afterSummary = await getCorpusSummary(env);
+  try {
+    await env.DB.prepare(`
+      INSERT INTO corpus_maintenance_runs (kind, started_at, finished_at, ok, summary_json)
+      VALUES ('legacy_migration', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, ?)
+    `).bind(JSON.stringify({ before: beforeSummary, after: afterSummary, actions, actor })).run();
+  } catch {}
+
+  return {
+    before: {
+      draft: beforeSummary.draft,
+      archive: beforeSummary.archive,
+      active: beforeSummary.active,
+      conflict: beforeSummary.conflict,
+      excluded: beforeSummary.excluded,
+      total: beforeSummary.total
+    },
+    after: afterSummary,
+    actions
+  };
+}

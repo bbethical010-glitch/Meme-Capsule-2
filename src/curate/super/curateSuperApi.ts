@@ -7,7 +7,9 @@ export type SuperSummaryResponse = CorpusSummaryResponse;
 
 const getAuthHeaders = () => {
   const token = typeof window !== "undefined"
-    ? window.sessionStorage.getItem("curator_token") || window.sessionStorage.getItem("admin_token")
+    ? window.sessionStorage.getItem("curator_token")
+      || window.sessionStorage.getItem("meme-capsule:admin-api-token")
+      || window.sessionStorage.getItem("admin_token")
     : null;
   return {
     "Content-Type": "application/json",

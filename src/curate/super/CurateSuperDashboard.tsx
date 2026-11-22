@@ -174,6 +174,34 @@ export default function CurateSuperDashboard({
     }
   };
 
+  const handleClassifyLegacyCorpus = async () => {
+    const token = sessionStorage.getItem("curator_token") || sessionStorage.getItem("admin_token") || "";
+    if (!window.confirm("Run legacy classification migration? This will classify legacy memes into active, archive, conflict, and excluded based on consensus and AI review.")) {
+      return;
+    }
+    setDraftActionLoading(true);
+    setDraftActionNotice("Classifying legacy corpus (moving from default draft to active, archive, conflict, excluded)...");
+    try {
+      const res = await fetch("/api/admin/corpus/migrate-legacy", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed running legacy migration.");
+      }
+      setDraftActionNotice(`Migration successful! New distribution: ${data.after.active} Active, ${data.after.archive} Archive, ${data.after.conflict} Conflict, ${data.after.excluded} Excluded, ${data.after.draft} Draft.`);
+      await loadData();
+    } catch (err: any) {
+      setDraftActionNotice(err?.message || "Error running legacy migration.");
+    } finally {
+      setDraftActionLoading(false);
+    }
+  };
+
   return (
     <div className="curate-root" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       {/* Top Header */}
@@ -477,6 +505,23 @@ export default function CurateSuperDashboard({
                   title="Verify physical R2 files for drafts (MIME, SHA-256, Duplicates)"
                 >
                   🔍 VERIFY INTAKE
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClassifyLegacyCorpus}
+                  disabled={draftActionLoading}
+                  style={{
+                    background: "#16a34a",
+                    color: "#fff",
+                    border: "1px solid #4ade80",
+                    padding: "8px 14px",
+                    fontSize: "12px",
+                    fontFamily: "Anton",
+                    cursor: draftActionLoading ? "not-allowed" : "pointer"
+                  }}
+                  title="Classify legacy draft memes into active, archive, conflict, and excluded"
+                >
+                  🚀 CLASSIFY LEGACY CORPUS
                 </button>
               </div>
             )}
