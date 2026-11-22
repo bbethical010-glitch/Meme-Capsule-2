@@ -548,6 +548,7 @@ export default function AdminApp() {
   const saveToken = () => {
     window.sessionStorage.setItem(ADMIN_TOKEN_KEY, adminToken);
     setNotice("Admin token saved for this browser session.");
+    refreshCorpusSummary();
   };
 
   const loadBackend = useCallback(async (targetPage = currentPage, targetPerPage = pageSize) => {
@@ -587,6 +588,7 @@ export default function AdminApp() {
       setBackendActiveCount(activeCount);
 
       setNotice(`Backend connected. ${data.memes.length} memes loaded (Total matching: ${data.pagination.total_count}).`);
+      refreshCorpusSummary();
     } catch (error) {
       setBackendMode(false);
       setNotice(error instanceof Error ? error.message : "Unable to load backend collection.");
@@ -653,6 +655,74 @@ export default function AdminApp() {
     } finally {
       setIsSyncing(false);
       setSyncActionName("");
+    }
+  };
+
+  const [isExecutingDraftAction, setIsExecutingDraftAction] = useState(false);
+
+  const handleRunAiJudgeDrafts = async () => {
+    if (!adminToken) {
+      setNotice("Admin API token is required to run AI Judge.");
+      return;
+    }
+    setIsExecutingDraftAction(true);
+    setNotice("Running AI Judge on verified drafts (batch of 25)...");
+    try {
+      const res = await fetch("/api/admin/intake/run-ai?limit=25", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+          "X-Admin-Token": adminToken
+        },
+        body: JSON.stringify({
+          meme_ids: selectedIds.size > 0 ? Array.from(selectedIds) : undefined
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed running AI judge.");
+      }
+      setNotice(`AI Judge completed: ${data.promoted} promoted to Archive, ${data.failed} skipped/unverified.`);
+      await loadBackend();
+      refreshCorpusSummary();
+    } catch (err: any) {
+      setNotice(err?.message || "Error running AI Judge.");
+    } finally {
+      setIsExecutingDraftAction(false);
+    }
+  };
+
+  const handleVerifyIntakeDrafts = async () => {
+    if (!adminToken) {
+      setNotice("Admin API token is required to verify intake.");
+      return;
+    }
+    setIsExecutingDraftAction(true);
+    setNotice("Verifying intake for drafts (batch of 25)...");
+    try {
+      const res = await fetch("/api/admin/intake/verify?limit=25", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+          "X-Admin-Token": adminToken
+        },
+        body: JSON.stringify({
+          meme_ids: selectedIds.size > 0 ? Array.from(selectedIds) : undefined
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed verifying intake.");
+      }
+      setNotice(`Intake verification completed: ${data.verified} verified, ${data.rejected} rejected (${data.remaining} remaining unverified).`);
+      await loadBackend();
+      refreshCorpusSummary();
+    } catch (err: any) {
+      setNotice(err?.message || "Error verifying intake.");
+    } finally {
+      setIsExecutingDraftAction(false);
     }
   };
 
@@ -1135,29 +1205,72 @@ export default function AdminApp() {
                       </div>
                     </div>
 
-                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                      {(["all", "draft", "archive", "active", "conflict", "excluded"] as const).map((st) => (
-                        <button
-                          key={st}
-                          type="button"
-                          onClick={() => {
-                            setStatusFilter(st);
-                            setCurrentPage(1);
-                          }}
-                          className="brutalist-border-sm"
-                          style={{
-                            padding: "4px 8px",
-                            fontSize: "11px",
-                            fontWeight: 700,
-                            textTransform: "uppercase",
-                            background: statusFilter === st ? "var(--primary)" : "var(--surface)",
-                            color: statusFilter === st ? "#ffffff" : "var(--on-surface)",
-                            cursor: "pointer"
-                          }}
-                        >
-                          {st.toUpperCase()}
-                        </button>
-                      ))}
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                        {(["all", "draft", "archive", "active", "conflict", "excluded"] as const).map((st) => (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => {
+                              setStatusFilter(st);
+                              setCurrentPage(1);
+                            }}
+                            className="brutalist-border-sm"
+                            style={{
+                              padding: "4px 8px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                              background: statusFilter === st ? "var(--primary)" : "var(--surface)",
+                              color: statusFilter === st ? "#ffffff" : "var(--on-surface)",
+                              cursor: "pointer"
+                            }}
+                          >
+                            {st.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+
+                      {statusFilter === "draft" && (
+                        <div style={{ display: "flex", gap: "6px", alignItems: "center", marginLeft: "4px" }}>
+                          <button
+                            type="button"
+                            onClick={handleRunAiJudgeDrafts}
+                            disabled={isExecutingDraftAction}
+                            className="brutalist-border-sm"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              background: "#9b30ff",
+                              color: "#fff",
+                              border: "1px solid #c084fc",
+                              cursor: isExecutingDraftAction ? "not-allowed" : "pointer"
+                            }}
+                            title="Run AI Judge manually on verified drafts (25 at a time)"
+                          >
+                            ⚡ RUN AI JUDGE
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleVerifyIntakeDrafts}
+                            disabled={isExecutingDraftAction}
+                            className="brutalist-border-sm"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              background: "#0284c7",
+                              color: "#fff",
+                              border: "1px solid #38bdf8",
+                              cursor: isExecutingDraftAction ? "not-allowed" : "pointer"
+                            }}
+                            title="Verify intake files in R2 (MIME, SHA-256, Duplicates)"
+                          >
+                            🔍 VERIFY INTAKE
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 

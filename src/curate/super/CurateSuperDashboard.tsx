@@ -32,18 +32,31 @@ export default function CurateSuperDashboard({
   const [integrityReport, setIntegrityReport] = useState<any>(null);
   const [integrityLoading, setIntegrityLoading] = useState<boolean>(false);
   const [integrityPurging, setIntegrityPurging] = useState<boolean>(false);
+  const [draftActionLoading, setDraftActionLoading] = useState<boolean>(false);
+  const [draftActionNotice, setDraftActionNotice] = useState<string>("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [sumRes, memesRes] = await Promise.all([
-        fetchSuperSummary(),
-        fetchSuperMemes(filter, page, 20, search)
-      ]);
-      setSummary(sumRes);
-      setMemes(memesRes.memes);
-      setTotalPages(memesRes.total_pages);
-      setTotalCount(memesRes.total);
+      const summaryPromise = fetchSuperSummary()
+        .then((sumRes) => {
+          setSummary(sumRes);
+        })
+        .catch((err) => {
+          console.error("Error fetching super summary:", err);
+        });
+
+      const memesPromise = fetchSuperMemes(filter, page, 20, search)
+        .then((memesRes) => {
+          setMemes(memesRes?.memes || []);
+          setTotalPages(memesRes?.total_pages || 1);
+          setTotalCount(memesRes?.total || 0);
+        })
+        .catch((err) => {
+          console.error("Error fetching super memes:", err);
+        });
+
+      await Promise.allSettled([summaryPromise, memesPromise]);
       setLastRefreshed(new Date().toLocaleTimeString());
     } catch (err) {
       console.error("Error loading superadmin dashboard:", err);
@@ -108,6 +121,56 @@ export default function CurateSuperDashboard({
       alert("Error purging ghosts: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setIntegrityPurging(false);
+    }
+  };
+
+  const handleRunAiJudgeDrafts = async () => {
+    const token = sessionStorage.getItem("curator_token") || "";
+    setDraftActionLoading(true);
+    setDraftActionNotice("Running AI Judge on verified drafts (batch of 25)...");
+    try {
+      const res = await fetch("/api/admin/intake/run-ai?limit=25", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed running AI judge.");
+      }
+      setDraftActionNotice(`AI Judge completed: ${data.promoted} promoted to Archive, ${data.failed} skipped/unverified.`);
+      await loadData();
+    } catch (err: any) {
+      setDraftActionNotice(err?.message || "Error running AI Judge.");
+    } finally {
+      setDraftActionLoading(false);
+    }
+  };
+
+  const handleVerifyIntakeDrafts = async () => {
+    const token = sessionStorage.getItem("curator_token") || "";
+    setDraftActionLoading(true);
+    setDraftActionNotice("Verifying intake for drafts in R2 (batch of 25)...");
+    try {
+      const res = await fetch("/api/admin/intake/verify?limit=25", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed verifying intake.");
+      }
+      setDraftActionNotice(`Intake verification completed: ${data.verified} verified, ${data.rejected} rejected (${data.remaining} remaining unverified).`);
+      await loadData();
+    } catch (err: any) {
+      setDraftActionNotice(err?.message || "Error verifying intake.");
+    } finally {
+      setDraftActionLoading(false);
     }
   };
 
@@ -378,7 +441,52 @@ export default function CurateSuperDashboard({
             >
               {loading ? "LOADING..." : "🔄 RELOAD"}
             </button>
+
+            {filter === "draft" && (
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={handleRunAiJudgeDrafts}
+                  disabled={draftActionLoading}
+                  style={{
+                    background: "#9b30ff",
+                    color: "#fff",
+                    border: "1px solid #c084fc",
+                    padding: "8px 14px",
+                    fontSize: "12px",
+                    fontFamily: "Anton",
+                    cursor: draftActionLoading ? "not-allowed" : "pointer"
+                  }}
+                  title="Run AI Judge manually on verified drafts (25 at a time)"
+                >
+                  ⚡ RUN AI JUDGE
+                </button>
+                <button
+                  type="button"
+                  onClick={handleVerifyIntakeDrafts}
+                  disabled={draftActionLoading}
+                  style={{
+                    background: "#0284c7",
+                    color: "#fff",
+                    border: "1px solid #38bdf8",
+                    padding: "8px 14px",
+                    fontSize: "12px",
+                    fontFamily: "Anton",
+                    cursor: draftActionLoading ? "not-allowed" : "pointer"
+                  }}
+                  title="Verify physical R2 files for drafts (MIME, SHA-256, Duplicates)"
+                >
+                  🔍 VERIFY INTAKE
+                </button>
+              </div>
+            )}
           </div>
+
+          {draftActionNotice && (
+            <div style={{ width: "100%", padding: "8px 12px", background: "#222", border: "1px solid #9b30ff", color: "#f4c300", fontSize: "12px", fontFamily: "monospace" }}>
+              ℹ️ {draftActionNotice}
+            </div>
+          )}
 
           {/* CSV Export of Active Memes */}
           <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>

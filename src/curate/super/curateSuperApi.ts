@@ -6,10 +6,15 @@ import type { CorpusSummaryResponse } from "../../types/corpus";
 export type SuperSummaryResponse = CorpusSummaryResponse;
 
 const getAuthHeaders = () => {
-  const token = sessionStorage.getItem("curator_token");
+  const token = typeof window !== "undefined"
+    ? window.sessionStorage.getItem("curator_token") || window.sessionStorage.getItem("admin_token")
+    : null;
   return {
     "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {})
+    ...(token ? {
+      Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+      "X-Admin-Token": token.replace(/^Bearer\s+/i, "").trim()
+    } : {})
   };
 };
 

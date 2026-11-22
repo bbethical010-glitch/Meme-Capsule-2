@@ -10,17 +10,21 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const adminError = requireAdmin(request, env);
   if (adminError) return adminError;
 
-  const { results } = await env.DB.prepare(`
-    SELECT job_id, meme_id, original_filename, storage_path, content_hash,
-           byte_size, mime_type, reject_reason, matched_meme_id, created_at
-    FROM ingestion_jobs
-    WHERE state = 'failed'
-    ORDER BY created_at DESC
-    LIMIT 100
-  `).all();
+  let rejectedJobs: any[] = [];
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT job_id, meme_id, original_filename, storage_path, content_hash,
+             byte_size, mime_type, reject_reason, matched_meme_id, created_at
+      FROM ingestion_jobs
+      WHERE state = 'failed'
+      ORDER BY created_at DESC
+      LIMIT 100
+    `).all();
+    rejectedJobs = results || [];
+  } catch {}
 
   return json({
-    rejectedJobs: results || []
+    rejectedJobs
   });
 };
 

@@ -8,7 +8,7 @@ import type { PagesFunction } from "../../../_shared/pages";
 import { json, type Env } from "../../../_shared/d1r2";
 import { validateSession } from "../../../_shared/catAuth";
 import { ensureCurationTables } from "../../../_shared/curateDb";
-import { hasIngestionSchema } from "../../../_shared/ingestion";
+import { hasCorpusStatusColumn } from "../../../_shared/corpus";
 import { evaluateConsensus } from "../../../_shared/corpus";
 
 interface MemeRow {
@@ -64,18 +64,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const offset = (page - 1) * perPage;
     const publicBase = (env.R2_PUBLIC_URL || "").replace(/\/+$/, "");
 
-    const ingestionReady = await hasIngestionSchema(env.DB);
+    const hasCol = await hasCorpusStatusColumn(env.DB);
     let baseQuery = `
       FROM memes m
       LEFT JOIN meme_curation_final f ON m.id = f.meme_id
+      WHERE NOT EXISTS (SELECT 1 FROM meme_force_removals r WHERE r.meme_id = m.id)
     `;
-    if (ingestionReady) {
-      baseQuery += " LEFT JOIN ingestion_jobs ij ON m.id = ij.meme_id\n";
-    }
-    baseQuery += " WHERE m.id NOT IN (SELECT meme_id FROM meme_force_removals)";
-    if (ingestionReady) {
-      baseQuery += " AND (ij.meme_id IS NULL OR ij.state = 'human_ready')";
-    }
     const params: (string | number)[] = [];
 
     if (search) {
@@ -85,12 +79,40 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
     if (["draft", "archive", "active", "conflict", "conflicts", "excluded"].includes(filter)) {
       const targetState = filter === "conflicts" ? "conflict" : filter;
-      baseQuery += " AND m.corpus_status = ?";
-      params.push(targetState);
+      if (hasCol) {
+        baseQuery += ` AND (m.corpus_status = ? OR (m.corpus_status IS NULL AND CASE 
+          WHEN m.is_active = 1 AND m.status = 'active' THEN 'active'
+          WHEN m.curation_status = 'excluded' THEN 'excluded'
+          WHEN m.status = 'archived' THEN 'archive'
+          WHEN m.status = 'draft' THEN 'draft'
+          ELSE 'draft'
+        END = ?))`;
+        params.push(targetState, targetState);
+      } else {
+        if (targetState === "active") {
+          baseQuery += " AND m.is_active = 1 AND m.status = 'active'";
+        } else if (targetState === "excluded") {
+          baseQuery += " AND m.curation_status = 'excluded'";
+        } else if (targetState === "archive") {
+          baseQuery += " AND m.status = 'archived' AND (m.curation_status IS NULL OR m.curation_status != 'excluded')";
+        } else if (targetState === "draft") {
+          baseQuery += " AND m.status = 'draft'";
+        } else {
+          baseQuery += " AND 1=0";
+        }
+      }
     } else if (filter === "resolved") {
-      baseQuery += " AND m.corpus_status IN ('active', 'excluded')";
+      if (hasCol) {
+        baseQuery += " AND (m.corpus_status IN ('active', 'excluded') OR (m.corpus_status IS NULL AND (m.is_active = 1 OR m.curation_status = 'excluded')))";
+      } else {
+        baseQuery += " AND (m.is_active = 1 OR m.curation_status = 'excluded')";
+      }
     } else if (filter === "unresolved") {
-      baseQuery += " AND m.corpus_status = 'conflict'";
+      if (hasCol) {
+        baseQuery += " AND m.corpus_status = 'conflict'";
+      } else {
+        baseQuery += " AND 1=0";
+      }
     }
 
     // Get total count
@@ -100,11 +122,18 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const total = countRes?.cnt ?? 0;
     const totalPages = Math.ceil(total / perPage);
 
-    // Fetch memes for current page
-    const query = `
-      SELECT 
+    // Fetch memes for current page - ultra-fast indexed execution
+    const selectCols = hasCol
+      ? `
         m.id, m.title, m.image_url, m.storage_path,
-        m.corpus_status, m.excluded_at, m.purge_at, m.exclusion_reason,
+        COALESCE(m.corpus_status, CASE 
+          WHEN m.is_active = 1 AND m.status = 'active' THEN 'active'
+          WHEN m.curation_status = 'excluded' THEN 'excluded'
+          WHEN m.status = 'archived' THEN 'archive'
+          WHEN m.status = 'draft' THEN 'draft'
+          ELSE 'draft'
+        END) as corpus_status,
+        m.excluded_at, m.purge_at, m.exclusion_reason,
         m.curation_status,
         m.duplicate_of,
         m.topics,
@@ -117,17 +146,35 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         COALESCE(f.humour_mechanisms, m.humour_mechanisms) as final_mechanisms,
         f.curator_note as final_note,
         f.resolved_at
+      `
+      : `
+        m.id, m.title, m.image_url, m.storage_path,
+        CASE 
+          WHEN m.is_active = 1 AND m.status = 'active' THEN 'active'
+          WHEN m.curation_status = 'excluded' THEN 'excluded'
+          WHEN m.status = 'archived' THEN 'archive'
+          WHEN m.status = 'draft' THEN 'draft'
+          ELSE 'draft'
+        END as corpus_status,
+        NULL as excluded_at, NULL as purge_at, NULL as exclusion_reason,
+        m.curation_status,
+        m.duplicate_of,
+        m.topics,
+        m.tone,
+        m.humour_mechanisms,
+        COALESCE(f.corpus_status, m.curation_status) as final_status,
+        COALESCE(f.duplicate_of, m.duplicate_of) as final_duplicate_of,
+        COALESCE(f.topics, m.topics) as final_topics,
+        COALESCE(f.tone, m.tone) as final_tone,
+        COALESCE(f.humour_mechanisms, m.humour_mechanisms) as final_mechanisms,
+        f.curator_note as final_note,
+        f.resolved_at
+      `;
+
+    const query = `
+      SELECT ${selectCols}
       ${baseQuery}
-      ORDER BY 
-        CASE m.corpus_status
-          WHEN 'conflict' THEN 1
-          WHEN 'archive' THEN 2
-          WHEN 'draft' THEN 3
-          WHEN 'active' THEN 4
-          WHEN 'excluded' THEN 5
-          ELSE 6
-        END ASC,
-        m.uploaded_at ASC
+      ORDER BY m.uploaded_at DESC
       LIMIT ? OFFSET ?
     `;
 

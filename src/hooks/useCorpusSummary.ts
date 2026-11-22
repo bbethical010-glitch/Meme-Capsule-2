@@ -12,8 +12,11 @@ export function useCorpusSummary(authToken?: string) {
       setError(null);
 
       const headers: Record<string, string> = {};
-      if (authToken) {
-        headers["Authorization"] = `Bearer ${authToken}`;
+      const token = authToken || (typeof window !== "undefined" ? window.sessionStorage.getItem("admin_token") || window.sessionStorage.getItem("curator_token") : null);
+      if (token) {
+        const cleanToken = token.replace(/^Bearer\s+/i, "").trim();
+        headers["Authorization"] = `Bearer ${cleanToken}`;
+        headers["X-Admin-Token"] = cleanToken;
       }
 
       const res = await fetch("/api/admin/corpus/summary", {

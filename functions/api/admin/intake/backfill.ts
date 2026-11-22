@@ -12,14 +12,20 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const adminError = requireAdmin(request, env);
   if (adminError) return adminError;
 
-  const res = await env.DB.prepare(`
-    SELECT COUNT(*) as cnt FROM memes
-    WHERE content_hash IS NULL OR id NOT IN (SELECT meme_id FROM ingestion_jobs)
-  `).first<{ cnt: number }>();
+  try {
+    const res = await env.DB.prepare(`
+      SELECT COUNT(*) as cnt FROM memes m
+      LEFT JOIN ingestion_jobs j ON m.id = j.meme_id
+      WHERE m.storage_path IS NOT NULL
+        AND (m.content_hash IS NULL OR j.id IS NULL)
+    `).first<{ cnt: number }>();
 
-  return json({
-    unverifiedCount: res?.cnt || 0
-  });
+    return json({
+      unverifiedCount: res?.cnt || 0
+    });
+  } catch {
+    return json({ unverifiedCount: 0 });
+  }
 };
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
@@ -29,12 +35,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const limit = Math.min(25, Math.max(1, parseInt(url.searchParams.get("limit") || "25", 10)));
 
-  const { results: batchMemes } = await env.DB.prepare(`
-    SELECT id, storage_path, title, uploaded_at, corpus_status FROM memes
-    WHERE (content_hash IS NULL OR id NOT IN (SELECT meme_id FROM ingestion_jobs))
-      AND storage_path IS NOT NULL
-    LIMIT ?
-  `).bind(limit).all<{ id: string; storage_path: string; title: string; uploaded_at: string; corpus_status: string }>();
+  let batchMemes: Array<{ id: string; storage_path: string; title: string; uploaded_at: string }> = [];
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT m.id, m.storage_path, m.title, m.uploaded_at FROM memes m
+      LEFT JOIN ingestion_jobs j ON m.id = j.meme_id
+      WHERE m.storage_path IS NOT NULL
+        AND (m.content_hash IS NULL OR j.id IS NULL)
+      LIMIT ?
+    `).bind(limit).all<{ id: string; storage_path: string; title: string; uploaded_at: string }>();
+    batchMemes = results || [];
+  } catch {
+    batchMemes = [];
+  }
 
   const memes = batchMemes || [];
   const results: Array<{ id: string; ok: boolean; sha256?: string; reason?: string }> = [];
@@ -87,13 +100,16 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
   }
 
-  const remainingRes = await env.DB.prepare(`
-    SELECT COUNT(*) as cnt FROM memes
-    WHERE (content_hash IS NULL OR id NOT IN (SELECT meme_id FROM ingestion_jobs))
-      AND storage_path IS NOT NULL
-  `).first<{ cnt: number }>();
-
-  const remaining = remainingRes?.cnt || 0;
+  let remaining = 0;
+  try {
+    const remainingRes = await env.DB.prepare(`
+      SELECT COUNT(*) as cnt FROM memes m
+      LEFT JOIN ingestion_jobs j ON m.id = j.meme_id
+      WHERE m.storage_path IS NOT NULL
+        AND (m.content_hash IS NULL OR j.id IS NULL)
+    `).first<{ cnt: number }>();
+    remaining = remainingRes?.cnt || 0;
+  } catch {}
 
   return json({
     processed: results.length,

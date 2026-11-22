@@ -1,5 +1,5 @@
 import type { PagesFunction } from "../../../_shared/pages";
-import { json, type Env } from "../../../_shared/d1r2";
+import { json, requireAdmin, type Env } from "../../../_shared/d1r2";
 import { validateSession } from "../../../_shared/catAuth";
 import { getCorpusSummary } from "../../../_shared/corpus";
 
@@ -7,16 +7,14 @@ import { getCorpusSummary } from "../../../_shared/corpus";
  * GET /api/admin/corpus/summary
  *
  * Single Source of Truth for all Meme Capsule counts.
- * Protected by Admin token or Curator session.
+ * Protected by Admin token (Bearer or X-Admin-Token) or Curator/SuperAdmin session.
  * Total is strictly the sum of the 5 states.
  */
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
-  const authHeader = request.headers.get("Authorization");
-  const adminToken = env.ADMIN_API_TOKEN;
-  const isSuperToken = Boolean(authHeader && adminToken && authHeader === `Bearer ${adminToken}`);
-  const sessionUser = await validateSession(request, env);
+  const adminError = requireAdmin(request, env);
+  const sessionUser = adminError ? await validateSession(request, env) : null;
 
-  if (!isSuperToken && !sessionUser) {
+  if (adminError && !sessionUser) {
     return json({ error: "Authentication required." }, { status: 401 });
   }
 

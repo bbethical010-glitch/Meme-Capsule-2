@@ -1,5 +1,5 @@
 import type { Env } from "./d1r2";
-import { purgeMeme, DEPENDENT_CHILD_TABLES, type CorpusState } from "./corpus";
+import { purgeMeme, DEPENDENT_CHILD_TABLES, type CorpusState, hasCorpusStatusColumn } from "./corpus";
 
 export interface IntegrityClassResult {
   class_code: "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i";
@@ -25,6 +25,7 @@ const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 export async function scanGhosts(env: Env): Promise<GhostScanReport> {
   const classes: IntegrityClassResult[] = [];
   const now = Date.now();
+  const hasCol = await hasCorpusStatusColumn(env.DB);
 
   // Class (a): Child rows whose parent meme does not exist (Safe to delete)
   let classACount = 0;
@@ -103,17 +104,20 @@ export async function scanGhosts(env: Env): Promise<GhostScanReport> {
   const classCSamples: Array<{ id: string; detail?: string }> = [];
 
   try {
+    const nonActiveCondition = hasCol ? "m.corpus_status != 'active'" : "(m.status != 'active' OR m.is_active != 1)";
+    const activeCondition = hasCol ? "m.corpus_status = 'active'" : "(m.status = 'active' AND m.is_active = 1)";
+
     const nonActiveLedger = await env.DB.prepare(`
-      SELECT f.meme_id, m.corpus_status FROM meme_curation_final f
+      SELECT f.meme_id, ${hasCol ? "m.corpus_status" : "m.status as corpus_status"} FROM meme_curation_final f
       JOIN memes m ON f.meme_id = m.id
-      WHERE m.corpus_status != 'active'
+      WHERE ${nonActiveCondition}
       LIMIT 20
     `).all<{ meme_id: string; corpus_status: string }>();
 
     const activeWithoutLedger = await env.DB.prepare(`
       SELECT m.id FROM memes m
       LEFT JOIN meme_curation_final f ON m.id = f.meme_id AND f.corpus_status = 'keep'
-      WHERE m.corpus_status = 'active' AND f.meme_id IS NULL
+      WHERE ${activeCondition} AND f.meme_id IS NULL
       LIMIT 20
     `).all<{ id: string }>();
 
@@ -337,12 +341,14 @@ export async function purgeGhosts(
       }
     } else if (classCode === "c") {
       // Purge invalid ledger rows
+      const hasCol = await hasCorpusStatusColumn(env.DB);
+      const nonActiveCondition = hasCol ? "m.corpus_status != 'active'" : "(m.status != 'active' OR m.is_active != 1)";
       const res = await env.DB.prepare(`
         DELETE FROM meme_curation_final
         WHERE meme_id IN (
           SELECT f.meme_id FROM meme_curation_final f
           JOIN memes m ON f.meme_id = m.id
-          WHERE m.corpus_status != 'active'
+          WHERE ${nonActiveCondition}
           LIMIT 50
         )
       `).run();

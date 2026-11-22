@@ -11,13 +11,15 @@ import type { PagesFunction } from "../../../_shared/pages";
 import { json, type Env } from "../../../_shared/d1r2";
 import { validateSession } from "../../../_shared/catAuth";
 import { ensureCurationTables } from "../../../_shared/curateDb";
-import { transitionMeme, applyConsensus, type CorpusState, type VoteDecision } from "../../../_shared/corpus";
+import { transitionMeme, applyConsensus, hasCorpusStatusColumn, type CorpusState, type VoteDecision } from "../../../_shared/corpus";
 
 interface ResolvePayload {
   action?: "arbitrate" | "edit_vote";
   meme_id?: string;
   target_state?: "active" | "excluded";
+  corpus_status?: "keep" | "excluded" | "duplicate";
   note?: string;
+  curator_note?: string | null;
   // For edit_vote:
   judge_id?: string;
   new_vote?: VoteDecision;
@@ -39,18 +41,33 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return json({ error: "meme_id is required." }, { status: 400 });
     }
 
-    const currentMeme = await env.DB.prepare(
-      "SELECT id, corpus_status FROM memes WHERE id = ?"
-    ).bind(memeId).first<{ id: string; corpus_status: CorpusState }>();
+    const hasCol = await hasCorpusStatusColumn(env.DB);
+    let memeStatus: CorpusState = "draft";
 
-    if (!currentMeme) {
-      return json({ error: "Meme not found." }, { status: 404 });
+    if (hasCol) {
+      const currentMeme = await env.DB.prepare(
+        "SELECT id, corpus_status FROM memes WHERE id = ?"
+      ).bind(memeId).first<{ id: string; corpus_status: CorpusState }>();
+
+      if (!currentMeme) {
+        return json({ error: "Meme not found." }, { status: 404 });
+      }
+      memeStatus = currentMeme.corpus_status || "draft";
+    } else {
+      const currentMeme = await env.DB.prepare(
+        "SELECT id, status, is_active, curation_status FROM memes WHERE id = ?"
+      ).bind(memeId).first<{ id: string; status: string; is_active: number; curation_status: string | null }>();
+
+      if (!currentMeme) {
+        return json({ error: "Meme not found." }, { status: 404 });
+      }
+      memeStatus = currentMeme.is_active === 1 ? "active" : currentMeme.curation_status === "excluded" ? "excluded" : "draft";
     }
 
-    const actor = sessionUser.display_name || "Super Admin";
+    const actor = sessionUser.display_name || sessionUser.username || "Super Admin";
 
     // 1. EDIT VOTE on EXCLUDED meme
-    if (body.action === "edit_vote" || (currentMeme.corpus_status === "excluded" && body.judge_id && body.new_vote)) {
+    if (body.action === "edit_vote" || (memeStatus === "excluded" && body.judge_id && body.new_vote)) {
       const judgeId = (body.judge_id || "").trim();
       const newVote = body.new_vote;
 
@@ -80,7 +97,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         actor,
         `Superadmin edited vote for judge ${judgeId}: ${existingVote.corpus_status} -> ${newVote}`,
         now
-      ).run();
+      ).run().catch(() => {});
 
       // Re-run consensus evaluation
       const consensusRes = await applyConsensus(env, memeId);
@@ -95,22 +112,20 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       });
     }
 
-    // 2. CONFLICT ARBITRATION
-    if (currentMeme.corpus_status !== "conflict") {
-      return json({
-        error: `Arbitration is only valid for memes in 'conflict' state (current: '${currentMeme.corpus_status}').`
-      }, { status: 400 });
+    // 2. CONFLICT ARBITRATION / SUPERADMIN RESOLUTION
+    const targetState: "active" | "excluded" | undefined =
+      body.target_state ||
+      (body.corpus_status === "keep" ? "active" : body.corpus_status === "excluded" || body.corpus_status === "duplicate" ? "excluded" : undefined);
+
+    if (!targetState) {
+      return json({ error: "target_state must be 'active' or 'excluded' (or corpus_status 'keep'/'excluded')." }, { status: 400 });
     }
 
-    const targetState = body.target_state;
-    if (!targetState || (targetState !== "active" && targetState !== "excluded")) {
-      return json({ error: "target_state must be 'active' or 'excluded' for arbitration." }, { status: 400 });
-    }
-
+    const note = body.note || body.curator_note || "";
     await transitionMeme(env, memeId, targetState, {
       actor,
-      reason: body.note ? `superadmin_arbitration: ${body.note}` : "superadmin_arbitration",
-      expectedFrom: "conflict"
+      reason: note ? `superadmin_arbitration: ${note}` : "superadmin_arbitration",
+      expectedFrom: memeStatus
     });
 
     return json({

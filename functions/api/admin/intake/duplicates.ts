@@ -10,25 +10,32 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const adminError = requireAdmin(request, env);
   if (adminError) return adminError;
 
-  // 1. Group by content_hash
-  const { results: hashDuplicates } = await env.DB.prepare(`
-    SELECT content_hash, COUNT(*) as cnt, GROUP_CONCAT(id) as meme_ids, GROUP_CONCAT(corpus_status) as states
-    FROM memes
-    WHERE content_hash IS NOT NULL AND content_hash != ''
-    GROUP BY content_hash
-    HAVING COUNT(*) > 1
-    LIMIT 100
-  `).all<{ content_hash: string; cnt: number; meme_ids: string; states: string }>();
+  let hashDuplicates: Array<{ content_hash: string; cnt: number; meme_ids: string; states: string }> = [];
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT content_hash, COUNT(*) as cnt, GROUP_CONCAT(id) as meme_ids, GROUP_CONCAT(corpus_status) as states
+      FROM memes
+      WHERE content_hash IS NOT NULL AND content_hash != ''
+      GROUP BY content_hash
+      HAVING COUNT(*) > 1
+      LIMIT 100
+    `).all<{ content_hash: string; cnt: number; meme_ids: string; states: string }>();
+    hashDuplicates = results || [];
+  } catch {}
 
   // 2. Group by storage_path
-  const { results: pathDuplicates } = await env.DB.prepare(`
-    SELECT storage_path, COUNT(*) as cnt, GROUP_CONCAT(id) as meme_ids
-    FROM memes
-    WHERE storage_path IS NOT NULL AND storage_path != ''
-    GROUP BY storage_path
-    HAVING COUNT(*) > 1
-    LIMIT 100
-  `).all<{ storage_path: string; cnt: number; meme_ids: string }>();
+  let pathDuplicates: Array<{ storage_path: string; cnt: number; meme_ids: string }> = [];
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT storage_path, COUNT(*) as cnt, GROUP_CONCAT(id) as meme_ids
+      FROM memes
+      WHERE storage_path IS NOT NULL AND storage_path != ''
+      GROUP BY storage_path
+      HAVING COUNT(*) > 1
+      LIMIT 100
+    `).all<{ storage_path: string; cnt: number; meme_ids: string }>();
+    pathDuplicates = results || [];
+  } catch {}
 
   return json({
     hashDuplicateGroups: (hashDuplicates || []).map((row) => ({

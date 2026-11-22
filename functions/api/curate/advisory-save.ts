@@ -11,6 +11,7 @@ import type { PagesFunction } from "../../_shared/pages";
 import { json, type Env } from "../../_shared/d1r2";
 import { validateSession } from "../../_shared/catAuth";
 import { refreshBatchStatus } from "../../_shared/ingestion";
+import { transitionMeme } from "../../_shared/corpus";
 
 interface AdvisorySavePayload {
   meme_id: string;
@@ -204,12 +205,16 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           WHERE job_id = ?
         `).bind(now, now, targetJobId).run();
 
-        // Promote meme from 'draft' to 'archived' (unreviewed human curation status)
-        await env.DB.prepare(`
-          UPDATE memes
-          SET status = 'archived', is_active = 0, curation_status = NULL
-          WHERE id = ? AND status = 'draft'
-        `).bind(actualMemeId).run();
+        // Promote meme from 'draft' to 'archive' via authoritative state writer (Step 4)
+        try {
+          await transitionMeme(env, actualMemeId, "archive", {
+            actor: "ai-judge",
+            reason: "ai_review_success",
+            expectedFrom: "draft"
+          });
+        } catch (transErr) {
+          console.warn("Could not transition meme to archive:", transErr);
+        }
 
         // Populate legacy/human advisory predictions table
         const preview = evaluations.find((e) => e.judge_key === "judge4") || evaluations[0];

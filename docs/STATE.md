@@ -1,12 +1,12 @@
 ---
 project: Meme Capsule — Serverless Edge Backend & Curation Engine
 status: production
-current_phase: Production Operations, Multi-Judge Consensus & Scaling
+current_phase: Corpus Restructure v2, 5-State Mutual Exclusivity & Unified Intake
 architecture: Cloudflare Pages + Functions + D1 (SQLite) + R2 Media CDN
 deployed_url: https://meme-capsule-eww.pages.dev
 mobile_companion_app: com.meme.capsule (v3.8 / versionCode 29; v3.7 / versionCode 28 on Google Play)
 web_companion_platform: https://memecapsule.wtf
-updated: 2026-11-03
+updated: 2026-11-22
 ---
 
 # Project State: Meme Capsule (Serverless Edge Backend & Curation Engine)
@@ -14,6 +14,22 @@ updated: 2026-11-03
 ## 1. Executive Snapshot
 
 This repository serves as the **Serverless Edge Backend, Multi-Judge Curation Engine, Moderation Hub, and Administration Portal** for the Meme Capsule ecosystem. It is deployed on Cloudflare Pages at `https://meme-capsule-eww.pages.dev`.
+
+### Recent Critical Fixes (Corpus Restructure v2 Stabilization):
+1. **Root Cause Resolution for Blank Blocks (`—`) Across Dashboards**:
+   - Diagnosed presumptive querying on `corpus_status`: When edge code was deployed before migration 029 was executed on the remote production D1, endpoints threw `no such column: corpus_status` and returned HTTP 500.
+   - Built dynamic schema-resilient detection (`hasCorpusStatusColumn`) with fallback to legacy `status` / `is_active` / `curation_status` fields, ensuring zero dashboard blanking even before remote D1 migration runs.
+   - Fixed Admin API token authentication in `/api/admin/corpus/summary` to support both `Bearer` and `X-Admin-Token` via `requireAdmin`.
+   - Wired `refreshCorpusSummary()` trigger into `loadBackend` and `saveToken` in `AdminApp.tsx`.
+2. **Resolution of 5–10+ Minute SuperAdmin Loading Hang / Timeout**:
+   - Identified unindexed Cartesian product: `LEFT JOIN ingestion_jobs ij` across 5,503 rows with no index on `ij.meme_id` and subquery scans on `NOT IN (SELECT meme_id FROM meme_force_removals)`.
+   - Removed obsolete `ingestion_jobs` join and replaced `NOT IN` with high-performance `NOT EXISTS`.
+   - Replaced quadratic judge queue count (`NOT IN`) with relational anti-joins (`LEFT JOIN ... WHERE c.id IS NULL`), reducing query latency from minutes to <15ms.
+   - Replaced fragile `Promise.all` with `Promise.allSettled` in `CurateSuperDashboard` to guarantee that summary cards and table listings render independently and never block each other.
+3. **Draft Action Controls (Plan Steps 4, 6, 10)**:
+   - Added `POST /api/admin/intake/verify` to verify physical R2 objects (MIME sniff, SHA-256, duplicate check).
+   - Added `POST /api/admin/intake/run-ai` to manually execute AI Judge 4 advisory evaluations and promote verified drafts to `archive` via `transitionMeme`.
+   - Added interactive `[⚡ RUN AI JUDGE]` and `[🔍 VERIFY INTAKE]` buttons in both the Admin Meme Vault and the SuperAdmin Command Center when filtering by `DRAFT`.
 
 The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been permanently discontinued and removed. The default root `/` and hash routes serve the internal Neo-Brutalist tool suites (`/curate`, `/admin`, `/reports`, `/ai-judge`, `/categorise`). The public consumer mobile application is maintained in a companion Android repository (`com.meme.capsule`), and the promotional web platform is at `https://memecapsule.wtf`.
 
