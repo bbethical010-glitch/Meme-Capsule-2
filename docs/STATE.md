@@ -20,16 +20,19 @@ This repository serves as the **Serverless Edge Backend, Multi-Judge Curation En
    - Diagnosed presumptive querying on `corpus_status`: When edge code was deployed before migration 029 was executed on the remote production D1, endpoints threw `no such column: corpus_status` and returned HTTP 500.
    - Built dynamic schema-resilient detection (`hasCorpusStatusColumn`) with fallback to legacy `status` / `is_active` / `curation_status` fields, ensuring zero dashboard blanking even before remote D1 migration runs.
    - Fixed Admin API token authentication in `/api/admin/corpus/summary` to support both `Bearer` and `X-Admin-Token` via `requireAdmin`.
+   - Resolved token key naming discrepancy: `useCorpusSummary.ts` and `curateSuperApi.ts` now simultaneously check `meme-capsule:admin-api-token`, `curator_token`, and `admin_token` across browser sessions.
    - Wired `refreshCorpusSummary()` trigger into `loadBackend` and `saveToken` in `AdminApp.tsx`.
 2. **Resolution of 5–10+ Minute SuperAdmin Loading Hang / Timeout**:
    - Identified unindexed Cartesian product: `LEFT JOIN ingestion_jobs ij` across 5,503 rows with no index on `ij.meme_id` and subquery scans on `NOT IN (SELECT meme_id FROM meme_force_removals)`.
    - Removed obsolete `ingestion_jobs` join and replaced `NOT IN` with high-performance `NOT EXISTS`.
    - Replaced quadratic judge queue count (`NOT IN`) with relational anti-joins (`LEFT JOIN ... WHERE c.id IS NULL`), reducing query latency from minutes to <15ms.
    - Replaced fragile `Promise.all` with `Promise.allSettled` in `CurateSuperDashboard` to guarantee that summary cards and table listings render independently and never block each other.
-3. **Draft Action Controls (Plan Steps 4, 6, 10)**:
+3. **Draft Action Controls & Legacy Corpus Classification (Plan Steps 4, 6, 10, 11)**:
    - Added `POST /api/admin/intake/verify` to verify physical R2 objects (MIME sniff, SHA-256, duplicate check).
    - Added `POST /api/admin/intake/run-ai` to manually execute AI Judge 4 advisory evaluations and promote verified drafts to `archive` via `transitionMeme`.
-   - Added interactive `[⚡ RUN AI JUDGE]` and `[🔍 VERIFY INTAKE]` buttons in both the Admin Meme Vault and the SuperAdmin Command Center when filtering by `DRAFT`.
+   - Added `POST /api/admin/corpus/migrate-legacy` and `runLegacyDataMigration` in `functions/_shared/corpus.ts` to classify legacy default 'draft' memes into their true states (active, archive, conflict, excluded, draft).
+   - Added interactive `[⚡ RUN AI JUDGE]`, `[🔍 VERIFY INTAKE]`, and `[🚀 CLASSIFY LEGACY CORPUS]` buttons in both the Admin Meme Vault and the SuperAdmin Command Center when filtering by `DRAFT`.
+   - Documented the entire industrial conveyor belt architecture and step-by-step migration guide in `docs/WALKTHROUGH_ARCHITECTURE_AND_CONVEYOR_BELT.md`.
 
 The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been permanently discontinued and removed. The default root `/` and hash routes serve the internal Neo-Brutalist tool suites (`/curate`, `/admin`, `/reports`, `/ai-judge`, `/categorise`). The public consumer mobile application is maintained in a companion Android repository (`com.meme.capsule`), and the promotional web platform is at `https://memecapsule.wtf`.
 
