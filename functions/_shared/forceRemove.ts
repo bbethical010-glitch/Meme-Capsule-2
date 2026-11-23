@@ -6,9 +6,12 @@ interface MemeRow {
   storage_path: string | null;
   image_url: string | null;
   title: string | null;
+  content_hash: string | null;
 }
 
-/** Shared implementation used by the manual and unanimous-consensus remove paths. */
+export class PurgeR2Error extends Error {}
+
+/** Complete, idempotent purge used by every manual and automatic removal path. */
 export async function hardRemoveMeme(
   env: Env,
   memeId: string,
@@ -17,7 +20,7 @@ export async function hardRemoveMeme(
   removedByName: string = "Consensus Engine"
 ): Promise<void> {
   const memeRow = await env.DB.prepare(
-    "SELECT id, storage_path, image_url, title FROM memes WHERE id = ?",
+    "SELECT id, storage_path, image_url, title, content_hash FROM memes WHERE id = ?",
   ).bind(memeId).first<MemeRow>();
 
   // Record permanent audit log into meme_force_removals
@@ -41,6 +44,7 @@ export async function hardRemoveMeme(
       console.warn(`[force-remove] Could not log audit row for ${memeId}:`, auditErr);
     }
   }
+  statements.push(env.DB.prepare("DELETE FROM memes WHERE id = ?").bind(memeId));
 
   // Authoritative full purge through purgeMeme
   await purgeMeme(env, memeId, {
@@ -49,5 +53,9 @@ export async function hardRemoveMeme(
     detail: JSON.stringify({ removed_by_name: removedByName })
   });
 
-  console.info("[force-remove] hard-purged meme", { meme_id: memeId, reason, removed_by: removedBy });
+  console.info("[purge] hard-purged meme", {
+    meme_id: memeId,
+    reason,
+    removed_by: removedBy,
+  });
 }

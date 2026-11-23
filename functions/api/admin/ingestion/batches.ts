@@ -1,5 +1,6 @@
 import type { PagesFunction } from "../../../_shared/pages";
 import { json, requireAdmin, type Env } from "../../../_shared/d1r2";
+import { hardRemoveMeme } from "../../../_shared/forceRemove";
 import {
   INGESTION_MAX_BATCH_BYTES,
   INGESTION_MAX_FILE_BYTES,
@@ -380,7 +381,10 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
 
     for (const b of staleBatches) {
       const jobsRes = await env.DB.prepare(
-        "SELECT job_id, meme_id, storage_path FROM ingestion_jobs WHERE batch_id = ?"
+        `SELECT j.job_id, j.meme_id, j.storage_path
+         FROM ingestion_jobs j
+         LEFT JOIN memes m ON m.id = j.meme_id
+         WHERE j.batch_id = ? AND (m.status = 'draft' OR m.status IS NULL) AND COALESCE(m.is_active, 0) = 0`
       ).bind(b.id).all<{ job_id: string; meme_id: string; storage_path: string | null }>();
       const jobs = jobsRes.results || [];
       totalPurgedJobs += jobs.length;
@@ -388,13 +392,9 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
       if (jobs.length > 0) {
         const memeIds = jobs.map((j) => j.meme_id);
         for (const chunk of chunkArray(memeIds, 40)) {
-          const placeholders = chunk.map(() => "?").join(",");
-          await env.DB.prepare(`DELETE FROM memes WHERE id IN (${placeholders}) AND status = 'draft' AND is_active = 0`)
-            .bind(...chunk).run().catch(() => undefined);
-        }
-        const storagePaths = jobs.map((j) => j.storage_path).filter((p): p is string => Boolean(p));
-        for (const chunk of chunkArray(storagePaths, 100)) {
-          await env.MEMES_BUCKET.delete(chunk).catch(() => undefined);
+          for (const memeId of chunk) {
+            await hardRemoveMeme(env, memeId, "Stale ingestion batch purge", "admin", "Admin");
+          }
         }
       }
 
@@ -421,7 +421,12 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
     .first<IngestionBatchRow>();
   if (!batch) return json({ error: "Ingestion batch not found." }, { status: 404 });
 
-  const jobsRes = await env.DB.prepare("SELECT job_id, meme_id, storage_path FROM ingestion_jobs WHERE batch_id = ?")
+  const jobsRes = await env.DB.prepare(
+    `SELECT j.job_id, j.meme_id, j.storage_path
+     FROM ingestion_jobs j
+     LEFT JOIN memes m ON m.id = j.meme_id
+     WHERE j.batch_id = ? AND (m.status = 'draft' OR m.status IS NULL) AND COALESCE(m.is_active, 0) = 0`
+  )
     .bind(batchId)
     .all<{ job_id: string; meme_id: string; storage_path: string | null }>();
   const jobs = jobsRes.results || [];
@@ -429,16 +434,9 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
   if (jobs.length > 0) {
     const memeIds = jobs.map((j) => j.meme_id);
     for (const chunk of chunkArray(memeIds, 40)) {
-      const placeholders = chunk.map(() => "?").join(",");
-      await env.DB.prepare(`DELETE FROM memes WHERE id IN (${placeholders}) AND status = 'draft' AND is_active = 0`)
-        .bind(...chunk)
-        .run()
-        .catch(() => undefined);
-    }
-
-    const storagePaths = jobs.map((j) => j.storage_path).filter((p): p is string => Boolean(p));
-    for (const chunk of chunkArray(storagePaths, 100)) {
-      await env.MEMES_BUCKET.delete(chunk).catch(() => undefined);
+      for (const memeId of chunk) {
+        await hardRemoveMeme(env, memeId, "Ingestion batch purge", "admin", "Admin");
+      }
     }
   }
 

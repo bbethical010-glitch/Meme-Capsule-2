@@ -6,6 +6,7 @@
 
 import type { PagesFunction } from "../../../_shared/pages";
 import { json, requireAdmin, type Env } from "../../../_shared/d1r2";
+import { hardRemoveMeme } from "../../../_shared/forceRemove";
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const adminError = requireAdmin(request, env);
@@ -19,53 +20,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     const ids = body.ids;
 
-    // We must chunk the queries to respect D1 binding limits (max 100 parameters)
-    const CHUNK_SIZE = 20;
-
-    // 1. Fetch storage paths to delete from R2
-    const storagePaths: string[] = [];
-    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
-      const chunk = ids.slice(i, i + CHUNK_SIZE);
-      const placeholders = chunk.map(() => "?").join(",");
-      const { results } = await env.DB.prepare(
-        `SELECT storage_path FROM memes WHERE id IN (${placeholders})`
-      ).bind(...chunk).all<{ storage_path: string | null }>();
-      
-      if (results) {
-        for (const r of results) {
-          if (r.storage_path) storagePaths.push(r.storage_path);
-        }
-      }
-    }
-
-    // 2. Delete from R2
-    const bucket = env.MEMES_BUCKET || env.R2_BUCKET;
-    const failedR2: { key: string; error: string }[] = [];
-    if (bucket && storagePaths.length > 0) {
-      for (const key of storagePaths) {
-        try {
-          await bucket.delete(key);
-        } catch (e) {
-          console.error("Failed to delete from R2:", key, e);
-          failedR2.push({ key, error: e instanceof Error ? e.message : "R2 deletion error" });
-        }
-      }
-    }
-
-    // 3. Delete from all tables atomically
-    const stmts: D1PreparedStatement[] = [];
-    
     for (const id of ids) {
-      stmts.push(env.DB.prepare("DELETE FROM meme_curation WHERE meme_id = ?").bind(id));
-      stmts.push(env.DB.prepare("DELETE FROM meme_curation_final WHERE meme_id = ?").bind(id));
-      stmts.push(env.DB.prepare("DELETE FROM ai_curation_predictions WHERE meme_id = ?").bind(id));
-      stmts.push(env.DB.prepare("DELETE FROM memes WHERE id = ?").bind(id));
-    }
-
-    // Execute in batches (4 statements per ID, chunk by 50 statements total to be safe)
-    const STMT_CHUNK_SIZE = 50;
-    for (let i = 0; i < stmts.length; i += STMT_CHUNK_SIZE) {
-      await env.DB.batch(stmts.slice(i, i + STMT_CHUNK_SIZE));
+      await hardRemoveMeme(env, id, "Manual admin hard delete", "superadmin", "SuperAdmin");
     }
 
     return json({ 

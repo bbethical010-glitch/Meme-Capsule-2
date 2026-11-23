@@ -15,12 +15,6 @@ interface ForceRemovePayload {
   reason?: string;
 }
 
-interface MemeRow {
-  title: string | null;
-  image_url: string | null;
-  storage_path: string | null;
-}
-
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     // 1. Authenticate: any active judge
@@ -40,76 +34,17 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       if (!reason) reason = null;
     }
 
-    // 4. Check if meme already removed
-    const alreadyRemoved = await env.DB.prepare(
-      "SELECT r2_deleted FROM meme_force_removals WHERE meme_id = ?"
-    ).bind(memeId).first<{ r2_deleted: number }>();
-
-    if (alreadyRemoved?.r2_deleted === 1) {
-      return json({
-        success: true,
-        meme_id: memeId,
-        already_removed: true,
-        r2_deleted: true
-      });
-    }
-
-    // 5. Look up the meme
-    const meme = await env.DB.prepare(
-      "SELECT title, image_url, storage_path FROM memes WHERE id = ?"
-    ).bind(memeId).first<MemeRow>();
-
+    const meme = await env.DB.prepare("SELECT id FROM memes WHERE id = ?")
+      .bind(memeId)
+      .first<{ id: string }>();
     if (!meme) {
-      return json({ error: "Meme not found" }, { status: 404 });
-    }
-
-    // 6. Resolve R2 key
-    let r2Key: string | null = null;
-    if (meme.storage_path) {
-      // Ensure it starts with / for consistency
-      r2Key = meme.storage_path.startsWith("/") ? meme.storage_path : `/${meme.storage_path}`;
-    }
-
-    // 7. If already in removal table with r2_deleted = 0, retry only R2 delete
-    if (alreadyRemoved && alreadyRemoved.r2_deleted === 0) {
-      // Meme is already deactivated in D1; just retry R2 delete
-      if (r2Key) {
-        try {
-          await env.MEMES_BUCKET.delete(r2Key);
-          await env.DB.prepare(
-            "UPDATE meme_force_removals SET r2_deleted = 1, r2_deleted_at = ? WHERE meme_id = ?"
-          ).bind(new Date().toISOString(), memeId).run();
-
-          return json({
-            success: true,
-            meme_id: memeId,
-            r2_deleted: true
-          });
-        } catch (r2Err) {
-          const errorMsg = r2Err instanceof Error ? r2Err.message : "Unknown R2 error";
-          await env.DB.prepare(
-            "UPDATE meme_force_removals SET r2_error = ? WHERE meme_id = ?"
-          ).bind(errorMsg, memeId).run();
-
-          return json({
-            success: true,
-            meme_id: memeId,
-            r2_deleted: false,
-            warning: `R2 delete failed: ${errorMsg}`
-          });
-        }
-      } else {
-        // No R2 key, just mark as done
-        await env.DB.prepare(
-          "UPDATE meme_force_removals SET r2_deleted = 1, r2_error = ? WHERE meme_id = ?"
-        ).bind("not_in_r2", memeId).run();
-
-        return json({
-          success: true,
-          meme_id: memeId,
-          r2_deleted: true
-        });
+      const alreadyRemoved = await env.DB.prepare(
+        "SELECT r2_deleted FROM meme_force_removals WHERE meme_id = ?",
+      ).bind(memeId).first<{ r2_deleted: number }>();
+      if (alreadyRemoved) {
+        return json({ success: true, meme_id: memeId, already_removed: true, r2_deleted: true });
       }
+      return json({ error: "Meme not found" }, { status: 404 });
     }
 
     // 8. Record audit log into meme_force_removals and permanently purge via purgeMeme
