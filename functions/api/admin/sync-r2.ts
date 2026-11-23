@@ -1,5 +1,6 @@
 import type { PagesFunction } from "../../_shared/pages";
 import { json, requireAdmin, type Env } from "../../_shared/d1r2";
+import { hardRemoveMeme } from "../../_shared/forceRemove";
 
 const BATCH_SIZE = 50;
 
@@ -118,7 +119,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       }
     }
 
-    // 6. Build and execute all batch statements (Insertions + Deletions)
+    // 6. Build and execute R2 additions; remove missing R2 metadata through the canonical purge.
     const statements = [];
     const now = new Date().toISOString();
     const syncedFiles: string[] = [];
@@ -169,19 +170,15 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       syncedFiles.push(obj.key);
     }
 
-    // Add statements for deleted files (clean up analytics references + meme row)
-    for (const item of memesToDelete) {
-      statements.push(db.prepare("DELETE FROM meme_events WHERE meme_id = ?").bind(item.id));
-      statements.push(db.prepare("DELETE FROM meme_analytics WHERE meme_id = ?").bind(item.id));
-      statements.push(db.prepare("DELETE FROM meme_daily_stats WHERE meme_id = ?").bind(item.id));
-      statements.push(db.prepare("DELETE FROM memes WHERE id = ?").bind(item.id));
-      removedFiles.push(item.key);
-    }
-
     // Execute in fast chunks of 50
     for (let i = 0; i < statements.length; i += BATCH_SIZE) {
       const chunk = statements.slice(i, i + BATCH_SIZE);
       await db.batch(chunk);
+    }
+
+    for (const item of memesToDelete) {
+      await hardRemoveMeme(env, item.id, "R2 sync missing-object purge", "sync-r2", "R2 Sync");
+      removedFiles.push(item.key);
     }
 
     const duration = Date.now() - startTime;
