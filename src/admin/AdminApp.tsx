@@ -37,6 +37,9 @@ import {
   CURATION_MECHANISMS,
   type CorpusStatus
 } from "../curate/curateTypes";
+import CorpusCategoryCards from "../components/CorpusCategoryCards";
+import { useCorpusSummary } from "../hooks/useCorpusSummary";
+import type { CorpusState } from "../types/corpus";
 import "./admin.css";
 
 const ImageEditorModal = React.lazy(() => import("../curate/editor/ImageEditorModal"));
@@ -219,7 +222,8 @@ export default function AdminApp() {
   // Filtering & Pagination
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState(searchTerm);
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "draft" | "archived" | "excluded" | "nsfw">("all");
+  const { summary: corpusSummary, refresh: refreshCorpusSummary } = useCorpusSummary(adminToken);
+  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "archive" | "active" | "conflict" | "excluded">("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -406,7 +410,7 @@ export default function AdminApp() {
     if (adminToken.trim()) {
       loadBackend();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const stats = useMemo(() => {
@@ -436,8 +440,8 @@ export default function AdminApp() {
       if (statusFilter === "active" && meme.status !== "active") return false;
       if (statusFilter === "draft" && meme.status !== "draft") return false;
       if (statusFilter === "excluded" && meme.curation_status !== "excluded") return false;
-      if (statusFilter === "archived" && (meme.status !== "archived" || meme.curation_status === "excluded")) return false;
-      if (statusFilter === "nsfw" && !(meme as any).is_nsfw) return false;
+      if (statusFilter === "archive" && (meme.status !== "archived" || meme.curation_status === "excluded")) return false;
+      if (statusFilter === "conflict" && (meme as any).corpus_status !== "conflict") return false;
 
       if (!term) return true;
       return (
@@ -544,6 +548,7 @@ export default function AdminApp() {
   const saveToken = () => {
     window.sessionStorage.setItem(ADMIN_TOKEN_KEY, adminToken);
     setNotice("Admin token saved for this browser session.");
+    refreshCorpusSummary();
   };
 
   const loadBackend = useCallback(async (targetPage = currentPage, targetPerPage = pageSize) => {
@@ -557,18 +562,16 @@ export default function AdminApp() {
     try {
       window.sessionStorage.setItem(ADMIN_TOKEN_KEY, adminToken);
 
-      const statusParam = (statusFilter === "all" || statusFilter === "excluded" || statusFilter === "nsfw") ? undefined : statusFilter;
-      const curationParam = statusFilter === "excluded" ? "excluded" : undefined;
-      const nsfwParam = statusFilter === "nsfw" ? "nsfw" : undefined;
+      const statusParam = (statusFilter === "all" || statusFilter === "excluded") ? undefined : (statusFilter === "archive" ? "archived" : statusFilter);
+      const curationParam = statusFilter === "excluded" ? "excluded" : (statusFilter === "conflict" ? "conflict" : undefined);
 
       const data = await fetchVaultMemes(adminToken, {
         batch_id: vaultBatchId || undefined,
         page: targetPage,
         per_page: targetPerPage,
         q: debouncedSearch.trim() || undefined,
-        status: statusParam,
+        status: statusParam as any,
         curation_status: curationParam,
-        nsfw: nsfwParam,
         stats: true
       });
 
@@ -585,6 +588,7 @@ export default function AdminApp() {
       setBackendActiveCount(activeCount);
 
       setNotice(`Backend connected. ${data.memes.length} memes loaded (Total matching: ${data.pagination.total_count}).`);
+      refreshCorpusSummary();
     } catch (error) {
       setBackendMode(false);
       setNotice(error instanceof Error ? error.message : "Unable to load backend collection.");
@@ -651,6 +655,107 @@ export default function AdminApp() {
     } finally {
       setIsSyncing(false);
       setSyncActionName("");
+    }
+  };
+
+  const [isExecutingDraftAction, setIsExecutingDraftAction] = useState(false);
+
+  const handleRunAiJudgeDrafts = async () => {
+    if (!adminToken) {
+      setNotice("Admin API token is required to run AI Judge.");
+      return;
+    }
+    setIsExecutingDraftAction(true);
+    setNotice("Running AI Judge on verified drafts (batch of 25)...");
+    try {
+      const res = await fetch("/api/admin/intake/run-ai?limit=25", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+          "X-Admin-Token": adminToken
+        },
+        body: JSON.stringify({
+          meme_ids: selectedIds.size > 0 ? Array.from(selectedIds) : undefined
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed running AI judge.");
+      }
+      setNotice(`AI Judge completed: ${data.promoted} promoted to Archive, ${data.failed} skipped/unverified.`);
+      await loadBackend();
+      refreshCorpusSummary();
+    } catch (err: any) {
+      setNotice(err?.message || "Error running AI Judge.");
+    } finally {
+      setIsExecutingDraftAction(false);
+    }
+  };
+
+  const handleVerifyIntakeDrafts = async () => {
+    if (!adminToken) {
+      setNotice("Admin API token is required to verify intake.");
+      return;
+    }
+    setIsExecutingDraftAction(true);
+    setNotice("Verifying intake for drafts (batch of 25)...");
+    try {
+      const res = await fetch("/api/admin/intake/verify?limit=25", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+          "X-Admin-Token": adminToken
+        },
+        body: JSON.stringify({
+          meme_ids: selectedIds.size > 0 ? Array.from(selectedIds) : undefined
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed verifying intake.");
+      }
+      setNotice(`Intake verification completed: ${data.verified} verified, ${data.rejected} rejected (${data.remaining} remaining unverified).`);
+      await loadBackend();
+      refreshCorpusSummary();
+    } catch (err: any) {
+      setNotice(err?.message || "Error verifying intake.");
+    } finally {
+      setIsExecutingDraftAction(false);
+    }
+  };
+
+  const handleClassifyLegacyCorpus = async () => {
+    if (!adminToken) {
+      setNotice("Admin API token is required to classify legacy corpus.");
+      return;
+    }
+    if (!window.confirm("Run legacy classification migration? This will classify legacy memes into active, archive, conflict, and excluded based on consensus and AI review.")) {
+      return;
+    }
+    setIsExecutingDraftAction(true);
+    setNotice("Classifying legacy corpus (moving from default draft to active, archive, conflict, excluded)...");
+    try {
+      const res = await fetch("/api/admin/corpus/migrate-legacy", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+          "X-Admin-Token": adminToken
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed running legacy migration.");
+      }
+      setNotice(`Migration successful! New distribution: ${data.after.active} Active, ${data.after.archive} Archive, ${data.after.conflict} Conflict, ${data.after.excluded} Excluded, ${data.after.draft} Draft.`);
+      await loadBackend();
+      refreshCorpusSummary();
+    } catch (err: any) {
+      setNotice(err?.message || "Error running legacy migration.");
+    } finally {
+      setIsExecutingDraftAction(false);
     }
   };
 
@@ -1033,37 +1138,15 @@ export default function AdminApp() {
         </nav>
 
         <div className="content-canvas">
-          <section className="top-stats-bar" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "12px" }}>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive">
-              <p>Total Memes</p>
-              <p className="stat-value total">{stats.total}</p>
-              {stats.live_corpus !== undefined && stats.purged ? (
-                <span style={{ fontSize: "10px", color: "var(--on-surface-variant)", display: "block", marginTop: "2px", fontFamily: "monospace" }}>
-                  {stats.live_corpus} live • {stats.purged} purged
-                </span>
-              ) : null}
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive">
-              <p>Active</p>
-              <p className="stat-value active">{stats.active}</p>
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive" style={{ borderLeft: "4px solid #FF3B30" }}>
-              <p style={{ color: "#FF3B30" }}>Excluded</p>
-              <p className="stat-value" style={{ color: "#FF3B30" }}>{stats.excluded}</p>
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive">
-              <p>Archived</p>
-              <p className="stat-value archived">{stats.archived}</p>
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive">
-              <p>Drafts</p>
-              <p className="stat-value drafts">{stats.drafts}</p>
-            </div>
-            <div className="stat-card brutalist-border brutalist-shadow-black brutalist-interactive" style={{ borderLeft: "4px solid #dd0061" }}>
-              <p style={{ color: "#dd0061" }}>NSFW</p>
-              <p className="stat-value" style={{ color: "#dd0061" }}>{stats.nsfw}</p>
-            </div>
-          </section>
+          {/* Canonical 5-State Corpus Category Cards */}
+          <CorpusCategoryCards
+            summary={corpusSummary}
+            activeStateFilter={statusFilter}
+            onSelectState={(st) => {
+              setStatusFilter(st);
+              setCurrentPage(1);
+            }}
+          />
 
           {notice && (
             <div
@@ -1155,29 +1238,90 @@ export default function AdminApp() {
                       </div>
                     </div>
 
-                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                      {(["all", "active", "excluded", "archived", "draft", "nsfw"] as const).map((st) => (
-                        <button
-                          key={st}
-                          type="button"
-                          onClick={() => {
-                            setStatusFilter(st);
-                            setCurrentPage(1);
-                          }}
-                          className="brutalist-border-sm"
-                          style={{
-                            padding: "4px 8px",
-                            fontSize: "11px",
-                            fontWeight: 700,
-                            textTransform: "uppercase",
-                            background: statusFilter === st ? (st === "excluded" ? "#FF3B30" : st === "nsfw" ? "#dd0061" : "var(--primary)") : "var(--surface)",
-                            color: statusFilter === st ? "#ffffff" : "var(--on-surface)",
-                            cursor: "pointer"
-                          }}
-                        >
-                          {st === "all" ? `all (${stats.total})` : st === "active" ? `active (${stats.active})` : st === "excluded" ? `excluded (${stats.excluded})` : st === "archived" ? `archived (${stats.archived})` : st === "nsfw" ? `nsfw (${stats.nsfw})` : `draft (${stats.drafts})`}
-                        </button>
-                      ))}
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                        {(["all", "draft", "archive", "active", "conflict", "excluded"] as const).map((st) => (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => {
+                              setStatusFilter(st);
+                              setCurrentPage(1);
+                            }}
+                            className="brutalist-border-sm"
+                            style={{
+                              padding: "4px 8px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                              background: statusFilter === st ? "var(--primary)" : "var(--surface)",
+                              color: statusFilter === st ? "#ffffff" : "var(--on-surface)",
+                              cursor: "pointer"
+                            }}
+                          >
+                            {st.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+
+                      {statusFilter === "draft" && (
+                        <div style={{ display: "flex", gap: "6px", alignItems: "center", marginLeft: "4px" }}>
+                          <button
+                            type="button"
+                            onClick={handleRunAiJudgeDrafts}
+                            disabled={isExecutingDraftAction}
+                            className="brutalist-border-sm"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              background: "#9b30ff",
+                              color: "#fff",
+                              border: "1px solid #c084fc",
+                              cursor: isExecutingDraftAction ? "not-allowed" : "pointer"
+                            }}
+                            title="Run AI Judge manually on verified drafts (25 at a time)"
+                          >
+                            ⚡ RUN AI JUDGE
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleVerifyIntakeDrafts}
+                            disabled={isExecutingDraftAction}
+                            className="brutalist-border-sm"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              background: "#0284c7",
+                              color: "#fff",
+                              border: "1px solid #38bdf8",
+                              cursor: isExecutingDraftAction ? "not-allowed" : "pointer"
+                            }}
+                            title="Verify intake files in R2 (MIME, SHA-256, Duplicates)"
+                          >
+                            🔍 VERIFY INTAKE
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleClassifyLegacyCorpus}
+                            disabled={isExecutingDraftAction}
+                            className="brutalist-border-sm"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              background: "#16a34a",
+                              color: "#fff",
+                              border: "1px solid #4ade80",
+                              cursor: isExecutingDraftAction ? "not-allowed" : "pointer"
+                            }}
+                            title="Classify legacy draft memes into active, archive, conflict, and excluded"
+                          >
+                            🚀 CLASSIFY LEGACY CORPUS
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1264,7 +1408,7 @@ export default function AdminApp() {
                 </div>
 
                 {/* Bulk Actions Header */}
-                {(statusFilter === "archived" || statusFilter === "excluded" || selectedIds.size > 0) && (
+                {(statusFilter === "archive" || statusFilter === "excluded" || selectedIds.size > 0) && (
                   <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "16px", padding: "12px", background: "var(--surface-container)", border: "2px solid black" }}>
                     <button
                       type="button"
@@ -1309,7 +1453,7 @@ export default function AdminApp() {
                         onInspect={setInspectedMeme}
                         isSelected={selectedIds.has(meme.id) || (inspectedMeme?.id === meme.id)}
                         onToggleSelect={handleToggleSelect}
-                        isArchivedView={statusFilter === "archived" || statusFilter === "excluded" || selectedIds.size > 0}
+                        isArchivedView={statusFilter === "archive" || statusFilter === "excluded" || selectedIds.size > 0}
                         onHardDelete={(id) => hardDeleteMemes([id])}
                       />
                     ))
@@ -1606,21 +1750,6 @@ export default function AdminApp() {
                                 onClick={() => setCurationAction("duplicate")}
                               >
                                 [DUPLICATE]
-                              </button>
-                              <button
-                                type="button"
-                                className="brutalist-border-sm"
-                                style={{
-                                  padding: "6px",
-                                  fontSize: "11px",
-                                  fontWeight: 800,
-                                  cursor: "pointer",
-                                  background: curationAction === "review_later" ? "#5ac8fa" : "#242424",
-                                  color: "#fff"
-                                }}
-                                onClick={() => setCurationAction("review_later")}
-                              >
-                                [REVIEW LATER]
                               </button>
                             </div>
 

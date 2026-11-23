@@ -1,5 +1,6 @@
 import type { PagesFunction } from "./_shared/pages";
 import { json, requireAdmin, type Env } from "./_shared/d1r2";
+import { purgeMeme } from "./_shared/corpus";
 
 type ReportStatus = "pending" | "resolved" | "dismissed";
 type ReportAction = ReportStatus | "archive_meme" | "blacklist_meme" | "mark_nsfw";
@@ -381,9 +382,10 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
       ).bind(...entries.map(([, value]) => value)).run();
     }
 
-    await env.DB.prepare(
-      "UPDATE memes SET status = 'archived', is_active = 0 WHERE id = ?"
-    ).bind(memeId).run();
+    await purgeMeme(env, memeId, {
+      actor: "moderation_report",
+      reason: `report_action_${action}`
+    });
   }
 
   const status: ReportStatus = (action === "archive_meme" || action === "blacklist_meme" || action === "mark_nsfw")

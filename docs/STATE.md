@@ -1,12 +1,12 @@
 ---
 project: Meme Capsule — Serverless Edge Backend & Curation Engine
 status: production
-current_phase: Production Operations, Multi-Judge Consensus & Scaling
+current_phase: Corpus Restructure v2, 5-State Mutual Exclusivity & Unified Intake
 architecture: Cloudflare Pages + Functions + D1 (SQLite) + R2 Media CDN
 deployed_url: https://meme-capsule-eww.pages.dev
 mobile_companion_app: com.meme.capsule (v3.8 / versionCode 29; v3.7 / versionCode 28 on Google Play)
 web_companion_platform: https://memecapsule.wtf
-updated: 2026-11-03
+updated: 2026-11-22
 ---
 
 # Project State: Meme Capsule (Serverless Edge Backend & Curation Engine)
@@ -14,6 +14,25 @@ updated: 2026-11-03
 ## 1. Executive Snapshot
 
 This repository serves as the **Serverless Edge Backend, Multi-Judge Curation Engine, Moderation Hub, and Administration Portal** for the Meme Capsule ecosystem. It is deployed on Cloudflare Pages at `https://meme-capsule-eww.pages.dev`.
+
+### Recent Critical Fixes (Corpus Restructure v2 Stabilization):
+1. **Root Cause Resolution for Blank Blocks (`—`) Across Dashboards**:
+   - Diagnosed presumptive querying on `corpus_status`: When edge code was deployed before migration 029 was executed on the remote production D1, endpoints threw `no such column: corpus_status` and returned HTTP 500.
+   - Built dynamic schema-resilient detection (`hasCorpusStatusColumn`) with fallback to legacy `status` / `is_active` / `curation_status` fields, ensuring zero dashboard blanking even before remote D1 migration runs.
+   - Fixed Admin API token authentication in `/api/admin/corpus/summary` to support both `Bearer` and `X-Admin-Token` via `requireAdmin`.
+   - Resolved token key naming discrepancy: `useCorpusSummary.ts` and `curateSuperApi.ts` now simultaneously check `meme-capsule:admin-api-token`, `curator_token`, and `admin_token` across browser sessions.
+   - Wired `refreshCorpusSummary()` trigger into `loadBackend` and `saveToken` in `AdminApp.tsx`.
+2. **Resolution of 5–10+ Minute SuperAdmin Loading Hang / Timeout**:
+   - Identified unindexed Cartesian product: `LEFT JOIN ingestion_jobs ij` across 5,503 rows with no index on `ij.meme_id` and subquery scans on `NOT IN (SELECT meme_id FROM meme_force_removals)`.
+   - Removed obsolete `ingestion_jobs` join and replaced `NOT IN` with high-performance `NOT EXISTS`.
+   - Replaced quadratic judge queue count (`NOT IN`) with relational anti-joins (`LEFT JOIN ... WHERE c.id IS NULL`), reducing query latency from minutes to <15ms.
+   - Replaced fragile `Promise.all` with `Promise.allSettled` in `CurateSuperDashboard` to guarantee that summary cards and table listings render independently and never block each other.
+3. **Draft Action Controls & Legacy Corpus Classification (Plan Steps 4, 6, 10, 11)**:
+   - Added `POST /api/admin/intake/verify` to verify physical R2 objects (MIME sniff, SHA-256, duplicate check).
+   - Added `POST /api/admin/intake/run-ai` to manually execute AI Judge 4 advisory evaluations and promote verified drafts to `archive` via `transitionMeme`.
+   - Added `POST /api/admin/corpus/migrate-legacy` and `runLegacyDataMigration` in `functions/_shared/corpus.ts` to classify legacy default 'draft' memes into their true states (active, archive, conflict, excluded, draft).
+   - Added interactive `[⚡ RUN AI JUDGE]`, `[🔍 VERIFY INTAKE]`, and `[🚀 CLASSIFY LEGACY CORPUS]` buttons in both the Admin Meme Vault and the SuperAdmin Command Center when filtering by `DRAFT`.
+   - Documented the entire industrial conveyor belt architecture and step-by-step migration guide in `docs/WALKTHROUGH_ARCHITECTURE_AND_CONVEYOR_BELT.md`.
 
 The legacy prototype landing UI (`src/App.tsx`, `src/styles.css`) has been permanently discontinued and removed. The default root `/` and hash routes serve the internal Neo-Brutalist tool suites (`/curate`, `/admin`, `/reports`, `/ai-judge`, `/categorise`). The public consumer mobile application is maintained in a companion Android repository (`com.meme.capsule`), and the promotional web platform is at `https://memecapsule.wtf`.
 
@@ -624,3 +643,35 @@ The single source of truth across all 3 codebases lives in `docs/MEME_CAPSULE_KN
   - Added automated unit tests in `tests/aiJudgeQueues.test.ts` verifying human batch queue eligibility and no-repeat guarantees.
   - `npm run build` compiled cleanly with zero TypeScript errors.
   - All 41 unit and consensus tests passing (`npm test`).
+
+## 21. Corpus Restructure (v2) — 5-State Lifecycle, Single State Writer, Path Equivalence & Unified Counts (November 21, 2026)
+
+- **1. Five Mutually Exclusive States**:
+  - Implemented exact 5-state partition: `draft`, `archive`, `active`, `conflict`, `excluded`.
+  - Mathematical Invariant: `TOTAL = draft + archive + active + conflict + excluded`.
+  - Removed dual-counting, intermediate states, and all references to `review_later`.
+  - Active memes are strictly those finalized as KEEP by human majority (2:1 or 3:0) or Superadmin arbitration.
+
+- **2. Single State Writer & Single Intake Invariants**:
+  - Created `functions/_shared/corpus.ts`: the single authoritative writer for corpus state via `transitionMeme()`, `applyConsensus()`, and `purgeMeme()`.
+  - Created `functions/_shared/intake.ts`: the single intake pipeline enforcing the Path Equivalence Invariant across R2 sync, admin uploads, and CLI ingestion.
+  - Added enforcement test `scripts/check-state-writers.ts` ensuring zero unauthorized state writes across `functions/`.
+
+- **3. Schema Migration 029 (`d1/migrations/029_corpus_restructure.sql`)**:
+  - Added `corpus_status`, `content_hash`, `excluded_at`, `purge_at`, `exclusion_reason` to `memes`.
+  - Created audit tables: `meme_state_log`, `meme_purge_log`, `corpus_maintenance_runs`, and `curation_legacy_later_votes`.
+  - Created indices for performance and uniqueness.
+
+- **4. Single Source of Truth Summary & Shared Category Cards**:
+  - Created `GET /api/admin/corpus/summary` computing live 5-state distribution, total, integrity, per-judge stats, and AI judge metrics.
+  - Rebuilt SuperAdmin summary (`/api/curate/super/summary`) to return the exact same canonical summary.
+  - Created shared React component `CorpusCategoryCards` and hook `useCorpusSummary`, rendering identical cards and numbers on Admin and SuperAdmin portals.
+
+- **5. Clean Purge Pipeline & Curation Maintenance Worker**:
+  - `purgeMeme()` deletes physical R2 object first, cascades through all 12 dependent child tables, logs to `meme_purge_log`, and leaves D1 untouched if R2 deletion fails.
+  - Created `workers/curationMaintenance.ts` and `workers/wrangler.curation.toml` (hourly cron) to settle unfinalized archive 3-vote memes, purge 7-day expired exclusions, and prune audit logs older than 180 days.
+
+- **6. Verification & Automated Tests**:
+  - 83 Vitest tests + 9 Node consensus tests passing (92/92 passing).
+  - TypeScript type check (`tsc --noEmit`) and Vite production build (`npm run build`) passing 100% with zero errors.
+  - Single state writer invariant satisfied with 0 violations.

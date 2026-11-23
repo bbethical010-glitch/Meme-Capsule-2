@@ -1,0 +1,15 @@
+name = "meme-capsule-curation"
+main = "curationMaintenance.ts"
+compatibility_date = "2024-12-18"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "meme-capsule-db"
+database_id = "64e2bb16-1557-4d53-8e6b-5197c8636d09"
+
+[[r2_buckets]]
+binding = "MEMES_BUCKET"
+bucket_name = "memes"
+
+[triggers]
+crons = ["0 * * * *"]

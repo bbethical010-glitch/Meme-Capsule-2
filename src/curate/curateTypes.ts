@@ -38,7 +38,7 @@ export const CURATION_MECHANISMS = [
   { id: "Surrealism",   key: "O", label: "Surrealism" }
 ] as const;
 
-export type CorpusStatus = "keep" | "excluded" | "duplicate" | "review_later";
+export type CorpusStatus = "keep" | "excluded" | "duplicate";
 
 export interface CuratorUser {
   id: string;

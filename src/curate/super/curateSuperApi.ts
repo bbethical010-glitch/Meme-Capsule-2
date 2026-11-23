@@ -1,12 +1,22 @@
 /**
  * API client for Curator Superadmin Command Center.
  */
+import type { CorpusSummaryResponse } from "../../types/corpus";
+
+export type SuperSummaryResponse = CorpusSummaryResponse;
 
 const getAuthHeaders = () => {
-  const token = sessionStorage.getItem("curator_token");
+  const token = typeof window !== "undefined"
+    ? window.sessionStorage.getItem("curator_token")
+      || window.sessionStorage.getItem("meme-capsule:admin-api-token")
+      || window.sessionStorage.getItem("admin_token")
+    : null;
   return {
     "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {})
+    ...(token ? {
+      Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+      "X-Admin-Token": token.replace(/^Bearer\s+/i, "").trim()
+    } : {})
   };
 };
 
@@ -18,76 +28,20 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return data as T;
 }
 
-export interface SuperSummaryResponse {
-  total_records?: number;
-  total_memes: number;
-  live_corpus?: number;
-  active_count?: number;
-  archived_count?: number;
-  draft_count?: number;
-  excluded_count?: number;
-  resolved_count: number;
-  resolved_active_count?: number;
-  resolved_excluded_count?: number;
-  total_resolved_count?: number;
-  total_force_removed?: number;
-  total_exclude_votes?: number;
-  percent_resolved: number;
-  consensus_metrics: {
-    unreviewed: number;
-    single_review: number;
-    unanimous_keep: number;
-    unanimous_exclude: number;
-    majority_keep?: number;
-    majority_exclude?: number;
-    conflicts: number;
-    total_with_reviews: number;
-  };
-  judges: {
-    user_id: string;
-    user_name: string;
-    total_reviewed: number;
-    personal_reviewed?: number;
-    active_reviewed?: number;
-    kept: number;
-    excluded: number;
-    duplicates: number;
-    review_later: number;
-    force_removed?: number;
-    last_active: string;
-  }[];
-  ai_judge?: {
-    total_reviewed: number;
-    kept: number;
-    excluded: number;
-    duplicates: number;
-    review_later: number;
-  };
-}
-
 export interface SuperMemeItem {
   id: string;
   title: string;
   image_url: string;
-  consensus_status:
-    | "unanimous_keep"
-    | "unanimous_exclude"
-    | "unanimous_duplicate"
-    | "unanimous_review_later"
-    | "majority_keep"
-    | "majority_exclude"
-    | "majority_duplicate"
-    | "majority_review_later"
-    | "conflict"
-    | "single_review"
-    | "pending_reviews"
-    | "unreviewed"
-    | "resolved";
+  corpus_status?: string;
+  excluded_at?: string | null;
+  purge_at?: string | null;
+  exclusion_reason?: string | null;
+  consensus_status: string;
   judges_count: number;
   judges: {
     user_id: string;
     user_name: string;
-    corpus_status: "keep" | "excluded" | "duplicate" | "review_later";
+    corpus_status: "keep" | "excluded" | "duplicate";
     duplicate_of?: string | null;
     topics: string[];
     tone?: string | null;
@@ -96,7 +50,7 @@ export interface SuperMemeItem {
     reviewed_at: string;
   }[];
   ai_judge?: {
-    corpus_status: "keep" | "excluded" | "duplicate" | "review_later" | null;
+    corpus_status: "keep" | "excluded" | "duplicate" | null;
     topics: string[];
     tone: string | null;
     humour_mechanisms: string[];
@@ -107,7 +61,7 @@ export interface SuperMemeItem {
     error: string | null;
   } | null;
   final_decision?: {
-    corpus_status: "keep" | "excluded" | "duplicate" | "review_later";
+    corpus_status: "keep" | "excluded" | "duplicate";
     duplicate_of?: string | null;
     topics: string[];
     tone?: string | null;
@@ -153,13 +107,13 @@ export async function fetchSuperMemes(
 
 export async function resolveSuperMeme(payload: {
   meme_id: string;
-  corpus_status: "keep" | "excluded" | "duplicate" | "review_later";
+  corpus_status: "keep" | "excluded" | "duplicate";
   duplicate_of?: string | null;
   topics?: string[];
   tone?: string | null;
   humour_mechanisms?: string[];
   curator_note?: string | null;
-}): Promise<{ success: boolean }> {
+}): Promise<{ success: boolean; message: string; meme: unknown }> {
   const res = await fetch("/api/curate/super/resolve", {
     method: "POST",
     headers: getAuthHeaders(),
@@ -168,15 +122,12 @@ export async function resolveSuperMeme(payload: {
   return handleResponse(res);
 }
 
-export async function bulkResolveSuper(action: string): Promise<{ success: boolean; count: number; message: string }> {
-  const res = await fetch("/api/curate/super/bulk-resolve", {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ action })
+export function getSuperExportUrl(filter: string = "all", format: "csv" | "json" = "csv"): string {
+  const token = sessionStorage.getItem("curator_token") || "";
+  const params = new URLSearchParams({
+    filter,
+    format,
+    ...(token ? { token } : {})
   });
-  return handleResponse(res);
-}
-
-export function getSuperExportUrl(type: "final" | "matrix", format: "csv" | "json"): string {
-  return `/api/curate/super/export?type=${type}&format=${format}`;
+  return `/api/curate/super/export?${params.toString()}`;
 }

@@ -8,10 +8,15 @@
 
 import type { PagesFunction } from "../../_shared/pages";
 import { json, requireAdmin, type Env } from "../../_shared/d1r2";
+import { validateSession } from "../../_shared/catAuth";
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const authError = requireAdmin(request, env);
-  if (authError) return authError;
+  const sessionUser = authError ? await validateSession(request, env) : null;
+
+  if (authError && (!sessionUser || (sessionUser.role !== "superadmin" && sessionUser.role !== "admin"))) {
+    return json({ success: false, error: "Unauthorized: Admin API token or Superadmin session required." }, { status: 401 });
+  }
 
   let query: string;
   try {

@@ -53,10 +53,8 @@ export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
         m.uploaded_at
       FROM memes m
       INNER JOIN meme_curation_final f ON m.id = f.meme_id
-      WHERE m.is_active = 1
-        AND m.status = 'active'
+      WHERE m.corpus_status = 'active'
         AND f.corpus_status = 'keep'
-        AND (m.category IS NULL OR LOWER(m.category) != 'archived')
       ORDER BY m.uploaded_at DESC
     `).all<CatalogRow>();
 

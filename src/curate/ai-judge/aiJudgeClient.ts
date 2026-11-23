@@ -11,7 +11,7 @@ import {
   buildUnifiedAiJudgePrompt
 } from "./aiJudgePrompt";
 
-const VALID_STATUSES = new Set(["keep", "excluded", "duplicate", "review_later"]);
+const VALID_STATUSES = new Set(["keep", "excluded", "duplicate"]);
 const VALID_TOPICS = new Set(CURATION_TOPICS.map((t) => t.id));
 const VALID_TONES = new Set(CURATION_TONES.map((t) => t.id));
 const VALID_MECHS = new Set(CURATION_MECHANISMS.map((m) => m.id));
@@ -148,7 +148,6 @@ export const extractHybridCurationResult = (rawText: string): Record<string, unk
   if (statusMatch) {
     const s = statusMatch.toLowerCase();
     if (s.includes("exclude")) corpusStatus = "excluded";
-    else if (s.includes("later") || s.includes("review")) corpusStatus = "review_later";
     else if (s.includes("dup")) corpusStatus = "duplicate";
     else corpusStatus = "keep";
   } else {
@@ -156,8 +155,6 @@ export const extractHybridCurationResult = (rawText: string): Record<string, unk
     const lower = cleaned.toLowerCase();
     if (lower.includes("watermark") || lower.includes("not a meme") || lower.includes("exclude")) {
       corpusStatus = "excluded";
-    } else if (lower.includes("review later") || lower.includes("ambiguous")) {
-      corpusStatus = "review_later";
     }
   }
 

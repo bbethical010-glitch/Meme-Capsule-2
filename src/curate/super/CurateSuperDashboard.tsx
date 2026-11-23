@@ -2,13 +2,13 @@ import { useState, useEffect, useCallback } from "react";
 import {
   fetchSuperSummary,
   fetchSuperMemes,
-  bulkResolveSuper,
   getSuperExportUrl,
   type SuperSummaryResponse,
   type SuperMemeItem
 } from "./curateSuperApi";
 import CuratorComparisonTable from "./CuratorComparisonTable";
-import ForceRemovalAudit from "../../categorise/superadmin/ForceRemovalAudit";
+import CorpusCategoryCards from "../../components/CorpusCategoryCards";
+import type { CorpusState } from "../../types/corpus";
 
 interface CurateSuperDashboardProps {
   onSwitchToJudgeMode: () => void;
@@ -22,27 +22,41 @@ export default function CurateSuperDashboard({
   const [summary, setSummary] = useState<SuperSummaryResponse | null>(null);
   const [memes, setMemes] = useState<SuperMemeItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
-  const [batchLoading, setBatchLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
-  const [showForceRemovalAudit, setShowForceRemovalAudit] = useState<boolean>(false);
-  const token = sessionStorage.getItem("curator_token") || "";
+  const [showIntegrityModal, setShowIntegrityModal] = useState<boolean>(false);
+  const [integrityReport, setIntegrityReport] = useState<any>(null);
+  const [integrityLoading, setIntegrityLoading] = useState<boolean>(false);
+  const [integrityPurging, setIntegrityPurging] = useState<boolean>(false);
+  const [draftActionLoading, setDraftActionLoading] = useState<boolean>(false);
+  const [draftActionNotice, setDraftActionNotice] = useState<string>("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [sumRes, memesRes] = await Promise.all([
-        fetchSuperSummary(),
-        fetchSuperMemes(filter, page, 20, search)
-      ]);
-      setSummary(sumRes);
-      setMemes(memesRes.memes);
-      setTotalPages(memesRes.total_pages);
-      setTotalCount(memesRes.total);
+      const summaryPromise = fetchSuperSummary()
+        .then((sumRes) => {
+          setSummary(sumRes);
+        })
+        .catch((err) => {
+          console.error("Error fetching super summary:", err);
+        });
+
+      const memesPromise = fetchSuperMemes(filter, page, 20, search)
+        .then((memesRes) => {
+          setMemes(memesRes?.memes || []);
+          setTotalPages(memesRes?.total_pages || 1);
+          setTotalCount(memesRes?.total || 0);
+        })
+        .catch((err) => {
+          console.error("Error fetching super memes:", err);
+        });
+
+      await Promise.allSettled([summaryPromise, memesPromise]);
       setLastRefreshed(new Date().toLocaleTimeString());
     } catch (err) {
       console.error("Error loading superadmin dashboard:", err);
@@ -67,19 +81,124 @@ export default function CurateSuperDashboard({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [loadData]);
 
-  const handleBulkResolve = async (action: string) => {
-    if (!confirm(`Are you sure you want to batch-resolve all ${action.replace("_", " ")} memes?`)) {
+  const handleOpenIntegrity = async () => {
+    setShowIntegrityModal(true);
+    setIntegrityLoading(true);
+    try {
+      const token = sessionStorage.getItem("curator_token") || "";
+      const res = await fetch("/api/curate/super/integrity", {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIntegrityReport(data);
+      }
+    } catch (err) {
+      console.error("Failed loading integrity report:", err);
+    } finally {
+      setIntegrityLoading(false);
+    }
+  };
+
+  const handlePurgeGhosts = async () => {
+    if (!confirm("Are you sure you want to purge all detected ghost rows? This action is permanent and audited.")) {
       return;
     }
-    setBatchLoading(true);
+    setIntegrityPurging(true);
     try {
-      const res = await bulkResolveSuper(action);
-      alert(res.message);
-      loadData();
+      const token = sessionStorage.getItem("curator_token") || "";
+      const res = await fetch("/api/curate/super/integrity", {
+        method: "POST",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`Successfully purged ${data.purgedCount || 0} ghost rows.`);
+        handleOpenIntegrity();
+        loadData();
+      }
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Bulk resolve failed");
+      alert("Error purging ghosts: " + (err instanceof Error ? err.message : String(err)));
     } finally {
-      setBatchLoading(false);
+      setIntegrityPurging(false);
+    }
+  };
+
+  const handleRunAiJudgeDrafts = async () => {
+    const token = sessionStorage.getItem("curator_token") || "";
+    setDraftActionLoading(true);
+    setDraftActionNotice("Running AI Judge on verified drafts (batch of 25)...");
+    try {
+      const res = await fetch("/api/admin/intake/run-ai?limit=25", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed running AI judge.");
+      }
+      setDraftActionNotice(`AI Judge completed: ${data.promoted} promoted to Archive, ${data.failed} skipped/unverified.`);
+      await loadData();
+    } catch (err: any) {
+      setDraftActionNotice(err?.message || "Error running AI Judge.");
+    } finally {
+      setDraftActionLoading(false);
+    }
+  };
+
+  const handleVerifyIntakeDrafts = async () => {
+    const token = sessionStorage.getItem("curator_token") || "";
+    setDraftActionLoading(true);
+    setDraftActionNotice("Verifying intake for drafts in R2 (batch of 25)...");
+    try {
+      const res = await fetch("/api/admin/intake/verify?limit=25", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed verifying intake.");
+      }
+      setDraftActionNotice(`Intake verification completed: ${data.verified} verified, ${data.rejected} rejected (${data.remaining} remaining unverified).`);
+      await loadData();
+    } catch (err: any) {
+      setDraftActionNotice(err?.message || "Error verifying intake.");
+    } finally {
+      setDraftActionLoading(false);
+    }
+  };
+
+  const handleClassifyLegacyCorpus = async () => {
+    const token = sessionStorage.getItem("curator_token") || sessionStorage.getItem("admin_token") || "";
+    if (!window.confirm("Run legacy classification migration? This will classify legacy memes into active, archive, conflict, and excluded based on consensus and AI review.")) {
+      return;
+    }
+    setDraftActionLoading(true);
+    setDraftActionNotice("Classifying legacy corpus (moving from default draft to active, archive, conflict, excluded)...");
+    try {
+      const res = await fetch("/api/admin/corpus/migrate-legacy", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed running legacy migration.");
+      }
+      setDraftActionNotice(`Migration successful! New distribution: ${data.after.active} Active, ${data.after.archive} Archive, ${data.after.conflict} Conflict, ${data.after.excluded} Excluded, ${data.after.draft} Draft.`);
+      await loadData();
+    } catch (err: any) {
+      setDraftActionNotice(err?.message || "Error running legacy migration.");
+    } finally {
+      setDraftActionLoading(false);
     }
   };
 
@@ -92,7 +211,7 @@ export default function CurateSuperDashboard({
             🛡️ CURATOR SUPER ADMIN COMMAND CENTER
           </span>
           <span style={{ fontSize: "11px", background: "#262626", padding: "3px 8px", borderRadius: "2px", color: "#34C759", fontFamily: "monospace" }}>
-            {summary ? `${summary.resolved_count} ACTIVE / ${summary.total_memes} (${summary.total_resolved_count ?? summary.resolved_count} RESOLVED)` : "LOADING..."}
+            {summary ? `${summary.active} ACTIVE / ${summary.total} TOTAL` : "LOADING..."}
           </span>
           {lastRefreshed && (
             <span style={{ fontSize: "10px", color: "#888", fontFamily: "monospace" }}>
@@ -124,20 +243,21 @@ export default function CurateSuperDashboard({
             {loading ? "REFRESHING..." : "REFRESH DATA (Ctrl+R)"}
           </button>
 
+          {/* Integrity Chip */}
           <button
             type="button"
-            onClick={() => setShowForceRemovalAudit((prev) => !prev)}
+            onClick={handleOpenIntegrity}
             style={{
-              background: showForceRemovalAudit ? "#dd0061" : "#1c1b1b",
-              color: showForceRemovalAudit ? "#ffffff" : "#dd0061",
-              border: "1px solid #dd0061",
-              padding: "6px 14px",
+              background: summary?.integrity?.ok ? "rgba(52, 199, 89, 0.15)" : "rgba(255, 59, 48, 0.15)",
+              color: summary?.integrity?.ok ? "#34c759" : "#ff3b30",
+              border: `1px solid ${summary?.integrity?.ok ? "#34c759" : "#ff3b30"}`,
+              padding: "6px 12px",
               fontFamily: "Anton",
               fontSize: "12px",
               cursor: "pointer"
             }}
           >
-            {showForceRemovalAudit ? "BACK TO DASHBOARD" : "⚡ FORCE REMOVAL AUDIT"}
+            {summary?.integrity?.ok ? "✓ INTACT" : "⚠ INTEGRITY DRIFT"}
           </button>
 
           <button
@@ -195,88 +315,24 @@ export default function CurateSuperDashboard({
 
       {/* Main Container */}
       <div style={{ maxWidth: "1600px", margin: "0 auto", padding: "24px", width: "100%", flex: 1 }}>
-        {showForceRemovalAudit ? (
-          <ForceRemovalAudit token={token} />
-        ) : (
-          <>
-            {/* KPI Cards Strip */}
-            {summary && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", marginBottom: "24px" }}>
-            <div style={{ background: "#1c1b1b", border: "1px solid #444", padding: "14px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: "11px", color: "#888" }}>LIVE CORPUS</div>
-                {summary.total_records ? (
-                  <span style={{ fontSize: "10px", color: "#888", fontFamily: "monospace" }} title="Total physical records in database">
-                    DB: {summary.total_records}
-                  </span>
-                ) : null}
-              </div>
-              <div className="curate-anton" style={{ fontSize: "24px", color: "#fff" }}>{summary.total_memes}</div>
-              {summary.total_records && summary.total_force_removed ? (
-                <div style={{ fontSize: "10px", color: "#777", marginTop: "2px", fontFamily: "monospace" }}>
-                  {summary.total_records} total − {summary.total_force_removed} purged
-                </div>
-              ) : null}
-            </div>
+        {/* 1. TOTAL CORPUS + Exactly 5 Category Cards */}
+        <CorpusCategoryCards
+          summary={summary}
+          activeStateFilter={filter}
+          onSelectState={(state: CorpusState) => {
+            setFilter(state);
+            setPage(1);
+          }}
+        />
 
-            <div style={{ background: "#1c1b1b", border: "1px solid #34C759", padding: "14px" }}>
-              <div style={{ fontSize: "11px", color: "#34C759" }}>ACTIVE RESOLVED</div>
-              <div className="curate-anton" style={{ fontSize: "24px", color: "#34C759" }}>{summary.resolved_count}</div>
-            </div>
-
-            <div style={{ background: "#1c1b1b", border: "1px solid #FF3B30", padding: "14px" }}>
-              <div style={{ fontSize: "11px", color: "#FF3B30" }}>FINAL EXCLUDED</div>
-              <div className="curate-anton" style={{ fontSize: "24px", color: "#FF3B30" }}>{summary.resolved_excluded_count ?? 0}</div>
-            </div>
-
-            <div style={{ background: "#1c1b1b", border: "1px solid #FF9F0A", padding: "14px" }}>
-              <div style={{ fontSize: "11px", color: "#FF9F0A" }}>HUMAN CONFLICTS</div>
-              <div className="curate-anton" style={{ fontSize: "24px", color: "#FF9F0A" }}>
-                {summary.consensus_metrics.conflicts}
-              </div>
-            </div>
-
-            <div style={{ background: "#1c1b1b", border: "1px solid #9b30ff", padding: "14px" }}>
-              <div style={{ fontSize: "11px", color: "#9b30ff" }}>UNANIMOUS KEEP</div>
-              <div className="curate-anton" style={{ fontSize: "24px", color: "#9b30ff" }}>
-                {summary.consensus_metrics.unanimous_keep}
-              </div>
-            </div>
-
-            <div style={{ background: "#1c1b1b", border: "1px solid #FF3B30", padding: "14px" }}>
-              <div style={{ fontSize: "11px", color: "#FF3B30" }}>UNANIMOUS EXCLUDE</div>
-              <div className="curate-anton" style={{ fontSize: "24px", color: "#FF3B30" }}>
-                {summary.consensus_metrics.unanimous_exclude}
-              </div>
-            </div>
-
-            <div style={{ background: "#1c1b1b", border: "1px solid #FF3B30", padding: "14px" }}>
-              <div style={{ fontSize: "11px", color: "#FF3B30" }}>TOTAL EXCLUDE VOTES</div>
-              <div className="curate-anton" style={{ fontSize: "24px", color: "#FF3B30" }}>
-                {summary.total_exclude_votes ?? 0}
-              </div>
-            </div>
-
-            <div style={{ background: "#1c1b1b", border: "1px solid #FF453A", padding: "14px" }}>
-              <div style={{ fontSize: "11px", color: "#FF453A" }}>FORCE REMOVED</div>
-              <div className="curate-anton" style={{ fontSize: "24px", color: "#FF453A" }}>
-                {summary.total_force_removed ?? 0}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Judges Performance Strip */}
-        {summary && summary.judges.length > 0 && (
+        {/* 2. Per-Judge Progress Block */}
+        {summary && summary.judges && summary.judges.length > 0 && (
           <div style={{ background: "#181818", border: "1px solid #333", padding: "16px", marginBottom: "24px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <h3 className="curate-anton" style={{ margin: 0, fontSize: "16px", color: "#f4c300" }}>
-                  CURATOR / JUDGES LIVE PROGRESS ({summary.judges.length} ACTIVE)
+                  PER-JUDGE PROGRESS (3 DESIGNATED HUMAN JUDGES + AI ADVISORY)
                 </h3>
-                <span style={{ fontSize: "11px", color: "#888", fontFamily: "monospace" }}>
-                  (Judges 1–3: Human Consensus • AI Judge: Advisory Pre-Evaluation)
-                </span>
               </div>
               <button
                 type="button"
@@ -287,48 +343,69 @@ export default function CurateSuperDashboard({
               </button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" }}>
-              {summary.judges.map((j) => {
-                const isAiJudge = j.user_name.toLowerCase().includes("four") || j.user_name.toLowerCase().includes("ai") || j.user_id === "user-judge4";
-                return (
-                  <div key={j.user_id} style={{ background: "#222", border: isAiJudge ? "1px dashed #555" : "1px solid #3d3d3d", padding: "12px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                      <div>
-                        <strong style={{ color: "#fff", fontSize: "14px" }}>{j.user_name}</strong>
-                        <span style={{
-                          fontSize: "9px",
-                          marginLeft: "6px",
-                          padding: "1px 5px",
-                          borderRadius: "2px",
-                          background: isAiJudge ? "#333" : "#9b30ff",
-                          color: isAiJudge ? "#f4c300" : "#fff",
-                          fontFamily: "monospace"
-                        }}>
-                          {isAiJudge ? "AI ADVISORY" : "HUMAN"}
-                        </span>
-                      </div>
-                      <span style={{ fontSize: "12px", fontFamily: "monospace", color: "#f4c300" }}>
-                        {j.personal_reviewed !== undefined ? `${j.personal_reviewed} reviewed` : `${j.total_reviewed} reviewed`}
+              {summary.judges.map((j) => (
+                <div key={j.name} style={{ background: "#222", border: "1px solid #3d3d3d", padding: "12px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                    <div>
+                      <strong style={{ color: "#fff", fontSize: "14px" }}>{j.name.toUpperCase()}</strong>
+                      <span style={{
+                        fontSize: "9px",
+                        marginLeft: "6px",
+                        padding: "1px 5px",
+                        borderRadius: "2px",
+                        background: "#9b30ff",
+                        color: "#fff",
+                        fontFamily: "monospace"
+                      }}>
+                        HUMAN
                       </span>
                     </div>
-                    <div style={{ display: "flex", gap: "8px", fontSize: "11px", color: "#aaa", flexWrap: "wrap", marginTop: "8px" }}>
-                      <span style={{ color: "#34C759" }}>{j.kept} Kept</span>
-                      <span>•</span>
-                      <span style={{ color: "#FF3B30", fontWeight: "bold" }}>{j.excluded} Excl</span>
-                      <span>•</span>
-                      <span style={{ color: "#FF9F0A" }}>{j.duplicates} Dup</span>
-                      <span>•</span>
-                      <span style={{ color: "#f4c300" }}>{j.review_later} Later</span>
-                      <span>•</span>
-                      <span style={{ color: "#FF453A", fontWeight: "bold" }}>{j.force_removed ?? 0} Purged</span>
-                    </div>
+                    <span style={{ fontSize: "12px", fontFamily: "monospace", color: "#f4c300" }}>
+                      {j.reviewed} reviewed
+                    </span>
                   </div>
-                );
-              })}
+                  <div style={{ display: "flex", gap: "8px", fontSize: "11px", color: "#aaa", flexWrap: "wrap", marginTop: "8px" }}>
+                    <span style={{ color: "#34C759" }}>{j.keep} Keep</span>
+                    <span>•</span>
+                    <span style={{ color: "#FF3B30", fontWeight: "bold" }}>{j.exclude} Excl</span>
+                    <span>•</span>
+                    <span style={{ color: "#FF9F0A" }}>{j.duplicate} Dup</span>
+                    <span>•</span>
+                    <span style={{ color: "#8e8e93" }}>{j.queue_left} Left</span>
+                  </div>
+                </div>
+              ))}
+
+              {/* AI Judge 4 advisory block */}
+              <div style={{ background: "#222", border: "1px dashed #555", padding: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                  <div>
+                    <strong style={{ color: "#fff", fontSize: "14px" }}>AI JUDGE (GEMINI)</strong>
+                    <span style={{
+                      fontSize: "9px",
+                      marginLeft: "6px",
+                      padding: "1px 5px",
+                      borderRadius: "2px",
+                      background: "#333",
+                      color: "#f4c300",
+                      fontFamily: "monospace"
+                    }}>
+                      ADVISORY
+                    </span>
+                  </div>
+                  <span style={{ fontSize: "12px", fontFamily: "monospace", color: "#f4c300" }}>
+                    {summary.ai_judge?.judged || 0} evaluated
+                  </span>
+                </div>
+                <div style={{ fontSize: "11px", color: "#888", marginTop: "8px" }}>
+                  Pre-evaluated drafts promoted to archive
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Action & Filter Toolbar */}
+        {/* 3. Action & Filter Toolbar */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
           {/* Filters & Search */}
           <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
@@ -348,9 +425,12 @@ export default function CurateSuperDashboard({
                 outline: "none"
               }}
             >
-              <option value="all">All Memes ({totalCount})</option>
-              <option value="unresolved">Pending Superadmin Resolution</option>
-              <option value="resolved">✓ Authoritatively Resolved</option>
+              <option value="all">All States ({totalCount})</option>
+              <option value="conflict">⚠️ Conflict (Needs Arbitration)</option>
+              <option value="archive">📦 Archive (Voting Queue)</option>
+              <option value="draft">📝 Draft (Awaiting AI Judge)</option>
+              <option value="active">✓ Active (Live in App)</option>
+              <option value="excluded">❌ Excluded (7-day Purge Queue)</option>
             </select>
 
             <input
@@ -389,108 +469,99 @@ export default function CurateSuperDashboard({
             >
               {loading ? "LOADING..." : "🔄 RELOAD"}
             </button>
+
+            {filter === "draft" && (
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={handleRunAiJudgeDrafts}
+                  disabled={draftActionLoading}
+                  style={{
+                    background: "#9b30ff",
+                    color: "#fff",
+                    border: "1px solid #c084fc",
+                    padding: "8px 14px",
+                    fontSize: "12px",
+                    fontFamily: "Anton",
+                    cursor: draftActionLoading ? "not-allowed" : "pointer"
+                  }}
+                  title="Run AI Judge manually on verified drafts (25 at a time)"
+                >
+                  ⚡ RUN AI JUDGE
+                </button>
+                <button
+                  type="button"
+                  onClick={handleVerifyIntakeDrafts}
+                  disabled={draftActionLoading}
+                  style={{
+                    background: "#0284c7",
+                    color: "#fff",
+                    border: "1px solid #38bdf8",
+                    padding: "8px 14px",
+                    fontSize: "12px",
+                    fontFamily: "Anton",
+                    cursor: draftActionLoading ? "not-allowed" : "pointer"
+                  }}
+                  title="Verify physical R2 files for drafts (MIME, SHA-256, Duplicates)"
+                >
+                  🔍 VERIFY INTAKE
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClassifyLegacyCorpus}
+                  disabled={draftActionLoading}
+                  style={{
+                    background: "#16a34a",
+                    color: "#fff",
+                    border: "1px solid #4ade80",
+                    padding: "8px 14px",
+                    fontSize: "12px",
+                    fontFamily: "Anton",
+                    cursor: draftActionLoading ? "not-allowed" : "pointer"
+                  }}
+                  title="Classify legacy draft memes into active, archive, conflict, and excluded"
+                >
+                  🚀 CLASSIFY LEGACY CORPUS
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* Batch Actions & Exports */}
+          {draftActionNotice && (
+            <div style={{ width: "100%", padding: "8px 12px", background: "#222", border: "1px solid #9b30ff", color: "#f4c300", fontSize: "12px", fontFamily: "monospace" }}>
+              ℹ️ {draftActionNotice}
+            </div>
+          )}
+
+          {/* CSV Export of Active Memes */}
           <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              type="button"
-              onClick={() => handleBulkResolve("majority_keep")}
-              disabled={batchLoading}
-              style={{
-                background: "#1c2b1e",
-                border: "2px solid #34C759",
-                color: "#34C759",
-                padding: "6px 14px",
-                fontFamily: "Anton",
-                fontSize: "12px",
-                cursor: "pointer",
-                boxShadow: "0 0 10px rgba(52, 199, 89, 0.2)"
-              }}
-              title="Bulk resolve all memes with 2:1 human majority keep"
-            >
-              ⚡ INSTANT RESOLVE MAJORITY KEEPS {summary?.consensus_metrics?.majority_keep ? `(${summary.consensus_metrics.majority_keep})` : ""}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleBulkResolve("majority_exclude")}
-              disabled={batchLoading}
-              style={{
-                background: "#2b1c1c",
-                border: "2px solid #FF3B30",
-                color: "#FF3B30",
-                padding: "6px 14px",
-                fontFamily: "Anton",
-                fontSize: "12px",
-                cursor: "pointer",
-                boxShadow: "0 0 10px rgba(255, 59, 48, 0.2)"
-              }}
-              title="Bulk resolve all memes with 2:1 human majority exclude"
-            >
-              ⚡ INSTANT RESOLVE MAJORITY EXCLUDES {summary?.consensus_metrics?.majority_exclude ? `(${summary.consensus_metrics.majority_exclude})` : ""}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleBulkResolve("unanimous_keep")}
-              disabled={batchLoading}
-              style={{
-                background: "#222",
-                border: "1px solid #34C759",
-                color: "#34C759",
-                padding: "6px 12px",
-                fontFamily: "Anton",
-                fontSize: "12px",
-                cursor: "pointer"
-              }}
-            >
-              ⚡ AUTO-RESOLVE ALL UNANIMOUS KEEP
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleBulkResolve("unanimous_exclude")}
-              disabled={batchLoading}
-              style={{
-                background: "#222",
-                border: "1px solid #FF3B30",
-                color: "#FF3B30",
-                padding: "6px 12px",
-                fontFamily: "Anton",
-                fontSize: "12px",
-                cursor: "pointer"
-              }}
-            >
-              ⚡ AUTO-RESOLVE ALL UNANIMOUS EXCLUDE
-            </button>
-
             <a
-              href={getSuperExportUrl("final", "csv")}
-              download="meme_capsule_curated_final.csv"
+              href={getSuperExportUrl("active", "csv")}
+              download="meme_capsule_active_corpus.csv"
               style={{
-                background: "#9b30ff",
-                color: "#fff",
-                border: "1px solid #f4c300",
-                padding: "6px 12px",
+                background: "#34c759",
+                color: "#121212",
+                border: "1px solid #34c759",
+                padding: "8px 14px",
                 fontFamily: "Anton",
                 fontSize: "12px",
-                textDecoration: "none"
+                textDecoration: "none",
+                fontWeight: "bold"
               }}
             >
-              ↓ EXPORT FINAL DATASET (CSV)
+              ↓ EXPORT ACTIVE CORPUS (CSV)
             </a>
           </div>
         </div>
 
-        {/* Meme Comparison Data Table */}
+        {/* 4. Meme Comparison Data Table */}
         <CuratorComparisonTable
           memes={memes}
           loading={loading}
           onRefresh={loadData}
         />
 
-        {/* Pagination Bar */}
+        {/* 5. Pagination Bar */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", color: "#888", fontSize: "12px" }}>
           <div>
             Showing Page <strong>{page}</strong> of <strong>{totalPages}</strong> ({totalCount} total memes)
@@ -514,9 +585,107 @@ export default function CurateSuperDashboard({
             </button>
           </div>
         </div>
-          </>
-        )}
       </div>
+
+      {/* Integrity & Ghost Purge Modal */}
+      {showIntegrityModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0, 0, 0, 0.85)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px"
+          }}
+        >
+          <div
+            style={{
+              background: "#18181b",
+              border: "2px solid #333",
+              borderRadius: "8px",
+              maxWidth: "700px",
+              width: "100%",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              padding: "24px"
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <h2 className="curate-anton" style={{ margin: 0, fontSize: "18px", color: "#f4c300" }}>
+                🛡️ DATABASE INTEGRITY & GHOST SCANNER
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowIntegrityModal(false)}
+                style={{ background: "transparent", border: "none", color: "#aaa", fontSize: "18px", cursor: "pointer" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {integrityLoading ? (
+              <div style={{ padding: "40px", textAlign: "center", color: "#888" }}>
+                Scanning database for ghost rows and orphaned references...
+              </div>
+            ) : integrityReport ? (
+              <div>
+                <div
+                  style={{
+                    background: integrityReport.totalGhosts === 0 ? "rgba(52, 199, 89, 0.15)" : "rgba(255, 59, 48, 0.15)",
+                    border: `1px solid ${integrityReport.totalGhosts === 0 ? "#34c759" : "#ff3b30"}`,
+                    padding: "12px",
+                    borderRadius: "4px",
+                    marginBottom: "16px",
+                    color: integrityReport.totalGhosts === 0 ? "#34c759" : "#ff3b30",
+                    fontWeight: "bold"
+                  }}
+                >
+                  {integrityReport.totalGhosts === 0
+                    ? "✓ Database is 100% clean. Zero ghost rows detected."
+                    : `⚠️ Detected ${integrityReport.totalGhosts} ghost rows across 9 audit classes.`}
+                </div>
+
+                <div style={{ fontSize: "12px", color: "#ccc", display: "grid", gap: "8px", marginBottom: "20px" }}>
+                  {Object.entries(integrityReport.classes || {}).map(([key, count]: [string, any]) => (
+                    <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "6px 10px", background: "#222" }}>
+                      <span>Class ({key}):</span>
+                      <strong>{count} ghosts</strong>
+                    </div>
+                  ))}
+                </div>
+
+                {integrityReport.totalGhosts > 0 && (
+                  <button
+                    type="button"
+                    onClick={handlePurgeGhosts}
+                    disabled={integrityPurging}
+                    style={{
+                      width: "100%",
+                      background: "#ff3b30",
+                      color: "#fff",
+                      border: "none",
+                      padding: "12px",
+                      fontFamily: "Anton",
+                      fontSize: "14px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    {integrityPurging ? "PURGING GHOSTS..." : "⚡ PURGE ALL GHOST ROWS"}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{ color: "#888" }}>No report generated yet.</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

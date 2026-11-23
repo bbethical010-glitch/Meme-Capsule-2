@@ -10,8 +10,11 @@ import {
   refreshBatchStatus,
   sanitizeFileName,
   sha256Hex,
+  toPublicUrl,
   type IngestionJobRow
 } from "../../../_shared/ingestion";
+import { intakeMeme } from "../../../_shared/intake";
+import { purgeMeme } from "../../../_shared/corpus";
 
 type UploadFile = {
   name?: string;
@@ -29,73 +32,43 @@ const field = (formData: FormData | null, name: string) => {
   return typeof value === "string" ? value.trim() : "";
 };
 
-const ensurePrivateMeme = async (env: Env, job: IngestionJobRow) => {
-  const now = new Date().toISOString();
-  await env.DB.prepare(`
-    INSERT OR IGNORE INTO memes (
-      id, title, image_url, storage_path, source_link, category, tags,
-      rarity, status, media_type, input_method, is_active, rights_note,
-      share_text, random_key, uploaded_at
-    ) VALUES (?, ?, NULL, ?, ?, 'Unsorted', '[]', 'Common', 'draft', 'image', 'upload', 0, 'reviewed', ?, ?, ?)
-  `).bind(
-    job.meme_id,
-    job.title,
-    job.storage_path,
-    job.original_filename,
-    job.title,
-    Math.random(),
-    now
-  ).run();
+const handleMemeIntake = async (
+  env: Env,
+  job: IngestionJobRow,
+  objectPath: string,
+  actualHash: string,
+  targetMemeId?: string
+) => {
+  // If replacing an existing meme, purge the old meme through authoritative purgeMeme
+  if (targetMemeId) {
+    const existingMeme = await env.DB.prepare(
+      "SELECT id, corpus_status FROM memes WHERE id = ?"
+    ).bind(targetMemeId).first<{ id: string; corpus_status: string }>();
 
-  const result = await env.DB.prepare(`
-    UPDATE memes
-    SET title = ?, image_url = NULL, storage_path = ?, source_link = ?,
-        status = 'draft', media_type = 'image', input_method = 'upload',
-        is_active = 0, rights_note = 'reviewed', share_text = ?
-    WHERE id = ? AND is_active = 0
-  `).bind(
-    job.title,
-    job.storage_path,
-    job.original_filename,
-    job.title,
-    job.meme_id
-  ).run();
-
-  if (!result.meta?.changes) {
-    const row = await env.DB.prepare("SELECT id FROM memes WHERE id = ?")
-      .bind(job.meme_id)
-      .first<{ id: string }>();
-    if (!row) throw new Error("The private meme metadata row could not be created.");
-  }
-};
-
-const replaceExistingMemeMedia = async (env: Env, job: IngestionJobRow, targetMemeId: string) => {
-  const existingMeme = await env.DB.prepare(
-    "SELECT id, storage_path, title FROM memes WHERE id = ?"
-  ).bind(targetMemeId).first<{ id: string; storage_path: string | null; title: string | null }>();
-
-  if (!existingMeme) {
-    return ensurePrivateMeme(env, job);
+    if (existingMeme) {
+      await purgeMeme(env, targetMemeId, {
+        actor: "admin_replace_existing",
+        reason: "replace_existing",
+        detail: `Replaced by new upload from job ${job.job_id}`
+      });
+    }
   }
 
-  const oldStoragePath = existingMeme.storage_path;
-  const now = new Date().toISOString();
+  // Converge onto unified intake pipeline
+  const intakeRes = await intakeMeme(env, {
+    storagePath: objectPath,
+    source: "admin_upload",
+    batchId: job.batch_id,
+    originalFilename: job.original_filename,
+    clientHash: actualHash,
+    actor: "admin_upload"
+  });
 
-  await env.DB.prepare(`
-    UPDATE memes
-    SET storage_path = ?, uploaded_at = ?
-    WHERE id = ?
-  `).bind(job.storage_path, now, targetMemeId).run();
-
-  await env.DB.prepare(`
-    UPDATE ingestion_jobs
-    SET meme_id = ?, state = 'human_ready', completed_at = ?
-    WHERE job_id = ?
-  `).bind(targetMemeId, now, job.job_id).run();
-
-  if (oldStoragePath && oldStoragePath !== job.storage_path) {
-    await env.MEMES_BUCKET.delete(oldStoragePath).catch(() => undefined);
+  if (!intakeRes.ok) {
+    throw new Error(`Unified intake rejected uploaded media: ${intakeRes.rejectReason || "unknown"}`);
   }
+
+  return intakeRes;
 };
 
 const markUploadFailure = async (env: Env, jobId: string, message: string) => {
@@ -126,12 +99,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   let r2Uploaded = false;
   try {
     if (job.upload_state === "uploaded" && job.storage_path) {
-      if (job.duplicate_of_job_id && job.duplicate_of_job_id.startsWith("replace:")) {
-        const targetMemeId = job.duplicate_of_job_id.slice("replace:".length).trim();
-        await replaceExistingMemeMedia(env, job, targetMemeId);
-      } else {
-        await ensurePrivateMeme(env, job);
-      }
+      const targetMemeId = (job.duplicate_of_job_id && job.duplicate_of_job_id.startsWith("replace:"))
+        ? job.duplicate_of_job_id.slice("replace:".length).trim()
+        : undefined;
+      await handleMemeIntake(env, job, job.storage_path, job.content_hash, targetMemeId);
       return json({
         success: true,
         job_id: jobId,
@@ -211,13 +182,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       .first<IngestionJobRow>();
     if (!uploadedJob) throw new Error("The uploaded ingestion job could not be read back.");
 
+    let finalMemeId = uploadedJob.meme_id;
     try {
-      if (uploadedJob.duplicate_of_job_id && uploadedJob.duplicate_of_job_id.startsWith("replace:")) {
-        const targetMemeId = uploadedJob.duplicate_of_job_id.slice("replace:".length).trim();
-        await replaceExistingMemeMedia(env, uploadedJob, targetMemeId);
-      } else {
-        await ensurePrivateMeme(env, uploadedJob);
-      }
+      const targetMemeId = (uploadedJob.duplicate_of_job_id && uploadedJob.duplicate_of_job_id.startsWith("replace:"))
+        ? uploadedJob.duplicate_of_job_id.slice("replace:".length).trim()
+        : undefined;
+      const intakeRes = await handleMemeIntake(env, uploadedJob, objectPath, actualHash, targetMemeId);
+      finalMemeId = intakeRes.memeId || uploadedJob.meme_id;
     } catch (metadataError) {
       const message = boundError(metadataError, "R2 upload succeeded but private D1 metadata could not be saved.");
       await env.DB.prepare(`
@@ -237,7 +208,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     return json({
       success: true,
       job_id: jobId,
-      meme_id: uploadedJob.meme_id,
+      meme_id: finalMemeId,
       upload_state: "uploaded",
       storage_path: objectPath,
       url: toPublicUrl(env, objectPath)

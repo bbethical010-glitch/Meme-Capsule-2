@@ -369,8 +369,8 @@ export type VaultQuery = {
   page?: number;
   per_page?: number;
   q?: string;
-  status?: "all" | "active" | "draft" | "archived";
-  curation_status?: "all" | "keep" | "excluded" | "review_later" | "unreviewed";
+  status?: "all" | "active" | "draft" | "archive" | "archived" | "conflict" | "excluded";
+  curation_status?: "all" | "keep" | "excluded" | "conflict" | "unreviewed";
   nsfw?: "all" | "safe" | "nsfw";
   sort_by?: "uploaded_at" | "title" | "id" | "likes_count";
   sort_dir?: "asc" | "desc";

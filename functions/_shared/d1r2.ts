@@ -145,9 +145,8 @@ export const getRandomMeme = async (
     const baseWhere = `
       FROM memes m
       INNER JOIN meme_curation_final f ON m.id = f.meme_id
-      WHERE m.is_active = 1 AND m.status = 'active'
+      WHERE m.corpus_status = 'active'
         AND f.corpus_status = 'keep'
-        AND (m.category IS NULL OR LOWER(m.category) != 'archived')
         ${nsfwClause} ${exclusionClause}`;
     const randomKey = Math.random();
     const first = await env.DB.prepare(
@@ -189,7 +188,7 @@ export const getDailyMeme = async (env: Env, options?: { nsfw?: boolean }): Prom
   const { results } = await env.DB.prepare(
     `SELECT m.* FROM memes m
      INNER JOIN meme_curation_final f ON m.id = f.meme_id
-     WHERE m.is_active = 1 AND m.status = 'active' AND f.corpus_status = 'keep' AND (m.category IS NULL OR LOWER(m.category) != 'archived') ${nsfwClause}
+     WHERE m.corpus_status = 'active' AND f.corpus_status = 'keep' ${nsfwClause}
      ORDER BY m.uploaded_at DESC LIMIT 50`
   ).all<D1MemeRow>();
 
